@@ -1,5 +1,7 @@
--- AI Target v6.4 Mobile + Free Fly + Auto Fly on Target
--- Fly работает и отдельно, и автоматически включается при запуске таргета
+--[[
+    AI Target Mobile v4.2
+    Таргет + Noclip + Speedhack + ESP (отдельные переключатели)
+]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -8,46 +10,60 @@ local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
-	warn("[AI Target] LocalPlayer отсутствует")
+	warn("[Дрочка типов] Нужен клиентский контекст")
 	return
 end
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 if not PlayerGui then
-	warn("[AI Target] PlayerGui не найден")
+	warn("[Дрочка типов] PlayerGui не найден")
 	return
 end
 
-local oldGui = PlayerGui:FindFirstChild("AITargetGUI")
-if oldGui then
-	oldGui:Destroy()
-end
+local old = PlayerGui:FindFirstChild("Дрочка типовGUI")
+if old then old:Destroy() end
 
+--------------------------------------------------
+-- Настройки
+--------------------------------------------------
 local Settings = {
-	Fly = false,
-	Noclip = false,
-	AutoTarget = false,
-
 	FlySpeed = 60,
+	CircleRadius = 8,
+	CircleHeight = 4,
+	CircleSpeed = 0.65,
 
 	AttackRange = 6,
-	AttackCooldown = 0.85,
+	AttackCooldown = 0.9,
+
 	AutoWeapon = true,
+	WeaponSlot = 2,
+
+	Noclip = false,
+
+	SpeedHack = false,
+	SpeedValue = 50,
+
+	-- ESP раздельно
+	ESP_Enabled = false,
+	ESP_Highlight = true,
+	ESP_Name = true,
+	ESP_Distance = true,
 }
 
 local Target = nil
-local Active = false
-local LastAttack = 0
-local NoclipOriginal = {}
-local OriginalPlatformStand = false
-
--- Ссылка на кнопку Fly, чтобы обновлять её при авто-включении
-local FlyButton = nil
+local isActive = false
+local connection = nil
+local circleAngle = 0
+local lastAttackTime = 0
+local noclipOriginal = {}
+local isMinimized = false
+local espFolder = nil
+local StatusLabel = nil
+local espConnections = {}
 
 --------------------------------------------------
--- Вспомогательные функции
+-- Вспомогательные
 --------------------------------------------------
-
 local function Alive(player)
 	if not player or player == LocalPlayer then return false end
 	local char = player.Character
@@ -68,29 +84,67 @@ local function GetHumanoid()
 end
 
 local function RestoreNoclip()
-	for part, old in pairs(NoclipOriginal) do
+	for part, oldVal in pairs(noclipOriginal) do
 		if part and part.Parent then
-			part.CanCollide = old
+			part.CanCollide = oldVal
 		end
 	end
-	table.clear(NoclipOriginal)
+	table.clear(noclipOriginal)
 end
 
 local function ApplyNoclip()
 	local char = LocalPlayer.Character
 	if not char then return end
-
 	if not Settings.Noclip then
 		RestoreNoclip()
 		return
 	end
-
 	for _, obj in ipairs(char:GetDescendants()) do
 		if obj:IsA("BasePart") then
-			if NoclipOriginal[obj] == nil then
-				NoclipOriginal[obj] = obj.CanCollide
+			if noclipOriginal[obj] == nil then
+				noclipOriginal[obj] = obj.CanCollide
 			end
 			obj.CanCollide = false
+		end
+	end
+end
+
+local function EquipWeapon()
+	if not Settings.AutoWeapon then return end
+	local char = LocalPlayer.Character
+	local hum = GetHumanoid()
+	local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+	if not char or not hum or not backpack then return end
+	if char:FindFirstChildOfClass("Tool") then return end
+
+	local tools = {}
+	for _, item in ipairs(backpack:GetChildren()) do
+		if item:IsA("Tool") then
+			table.insert(tools, item)
+		end
+	end
+	local slot = math.clamp(Settings.WeaponSlot or 2, 1, math.max(#tools, 1))
+	local weapon = tools[slot]
+	if weapon then
+		pcall(function()
+			hum:EquipTool(weapon)
+		end)
+	end
+end
+
+local function Attack()
+	if not Target or not Alive(Target) then return end
+	if tick() - lastAttackTime < Settings.AttackCooldown then return end
+
+	EquipWeapon()
+	local char = LocalPlayer.Character
+	local tool = char and char:FindFirstChildOfClass("Tool")
+	if tool then
+		local ok = pcall(function()
+			tool:Activate()
+		end)
+		if ok then
+			lastAttackTime = tick()
 		end
 	end
 end
@@ -98,7 +152,6 @@ end
 local function NearestTarget()
 	local myRoot = Root(LocalPlayer)
 	if not myRoot then return nil end
-
 	local best, bestDist = nil, math.huge
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if Alive(plr) then
@@ -113,201 +166,297 @@ local function NearestTarget()
 	return best
 end
 
-local function EquipTool()
-	if not Settings.AutoWeapon then return end
-	local char = LocalPlayer.Character
-	local hum = GetHumanoid()
-	local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-	if not char or not hum or not backpack then return end
-	if char:FindFirstChildOfClass("Tool") then return end
-
-	local tool = backpack:FindFirstChildOfClass("Tool")
-	if tool then
-		pcall(function()
-			hum:EquipTool(tool)
-		end)
+--------------------------------------------------
+-- ESP (с отдельными переключателями)
+--------------------------------------------------
+local function ClearESP()
+	if espFolder then
+		espFolder:Destroy()
+		espFolder = nil
 	end
+	for _, conn in pairs(espConnections) do
+		if conn then conn:Disconnect() end
+	end
+	table.clear(espConnections)
 end
 
-local function Attack()
-	if not Target or not Alive(Target) then return end
-	if os.clock() - LastAttack < Settings.AttackCooldown then return end
+local function CreateESP(player)
+	if not Settings.ESP_Enabled or not Alive(player) then return end
+	if not espFolder then
+		espFolder = Instance.new("Folder")
+		espFolder.Name = "AITargetESP"
+		espFolder.Parent = PlayerGui
+	end
 
-	EquipTool()
+	local char = player.Character
+	if not char then return end
+	local root = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not root or not hum then return end
 
-	local char = LocalPlayer.Character
-	local tool = char and char:FindFirstChildOfClass("Tool")
-	if tool then
-		local ok = pcall(function()
-			tool:Activate()
-		end)
-		if ok then
-			LastAttack = os.clock()
+	-- Подсветка
+	local highlight = nil
+	if Settings.ESP_Highlight then
+		highlight = Instance.new("Highlight")
+		highlight.Name = player.Name .. "_HL"
+		highlight.Adornee = char
+		highlight.FillColor = Color3.fromRGB(255, 60, 60)
+		highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+		highlight.FillTransparency = 0.55
+		highlight.OutlineTransparency = 0
+		highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		highlight.Parent = espFolder
+	end
+
+	-- Имя + дистанция
+	local billboard = nil
+	local label = nil
+	if Settings.ESP_Name or Settings.ESP_Distance then
+		billboard = Instance.new("BillboardGui")
+		billboard.Name = player.Name .. "_BB"
+		billboard.Adornee = root
+		billboard.Size = UDim2.fromOffset(140, 45)
+		billboard.StudsOffset = Vector3.new(0, 3.2, 0)
+		billboard.AlwaysOnTop = true
+		billboard.Parent = espFolder
+
+		label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, 0, 1, 0)
+		label.BackgroundTransparency = 1
+		label.TextColor3 = Color3.fromRGB(255, 255, 255)
+		label.TextStrokeTransparency = 0.35
+		label.Font = Enum.Font.GothamBold
+		label.TextSize = 13
+		label.Text = ""
+		label.Parent = billboard
+	end
+
+	-- Обновление текста
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		if not Settings.ESP_Enabled or not Alive(player) or not root.Parent then
+			if highlight then highlight:Destroy() end
+			if billboard then billboard:Destroy() end
+			if conn then conn:Disconnect() end
+			espConnections[player] = nil
+			return
+		end
+
+		if label then
+			local parts = {}
+			if Settings.ESP_Name then
+				table.insert(parts, player.DisplayName)
+			end
+			if Settings.ESP_Distance then
+				local myRoot = Root(LocalPlayer)
+				local dist = myRoot and math.floor((root.Position - myRoot.Position).Magnitude) or 0
+				table.insert(parts, dist .. "m")
+			end
+			label.Text = table.concat(parts, "\n")
+			label.Visible = #parts > 0
+		end
+	end)
+
+	espConnections[player] = conn
+end
+
+local function RefreshESP()
+	ClearESP()
+	if not Settings.ESP_Enabled then return end
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer then
+			CreateESP(plr)
 		end
 	end
 end
 
 --------------------------------------------------
--- Свободный Fly
+-- Основной цикл таргета
 --------------------------------------------------
-
-local function UpdateFlyButton()
-	if not FlyButton then return end
-	FlyButton.Text = "Fly: " .. (Settings.Fly and "ON" or "OFF")
-	FlyButton.BackgroundColor3 = Settings.Fly and Color3.fromRGB(45, 125, 80) or Color3.fromRGB(40, 45, 58)
-end
-
-local function SetFly(state)
-	Settings.Fly = state
-	local hum = GetHumanoid()
-	local root = Root(LocalPlayer)
-
-	if state then
-		if hum then
-			OriginalPlatformStand = hum.PlatformStand
-			hum.PlatformStand = true
+local function MoveToTarget()
+	if not isActive or not Target then return end
+	if not Alive(Target) then
+		isActive = false
+		if connection then
+			connection:Disconnect()
+			connection = nil
 		end
+		if StatusLabel then StatusLabel.Text = "Статус: цель потеряна" end
+		return
+	end
+
+	local myRoot = Root(LocalPlayer)
+	local tRoot = Root(Target)
+	if not myRoot or not tRoot then return end
+
+	if Settings.Noclip then
+		ApplyNoclip()
+	end
+
+	circleAngle = circleAngle + Settings.CircleSpeed * 0.05
+	if circleAngle > math.pi * 2 then
+		circleAngle = circleAngle - math.pi * 2
+	end
+
+	local desired = tRoot.Position + Vector3.new(
+		math.cos(circleAngle) * Settings.CircleRadius,
+		Settings.CircleHeight,
+		math.sin(circleAngle) * Settings.CircleRadius
+	)
+
+	local delta = desired - myRoot.Position
+	local dist = delta.Magnitude
+
+	if dist > 0.7 then
+		local speed = math.min(Settings.FlySpeed, dist * 7)
+		myRoot.AssemblyLinearVelocity = delta.Unit * speed
 	else
-		if hum then
-			hum.PlatformStand = OriginalPlatformStand
-		end
-		if root then
-			root.AssemblyLinearVelocity = Vector3.zero
-		end
+		myRoot.AssemblyLinearVelocity = Vector3.zero
 	end
 
-	UpdateFlyButton()
+	if (tRoot.Position - myRoot.Position).Magnitude <= Settings.AttackRange then
+		Attack()
+	end
 end
 
-local function GetFlyDirection()
-	local cam = workspace.CurrentCamera
-	if not cam then return Vector3.zero end
-
-	local direction = Vector3.zero
-	local camCF = cam.CFrame
-
-	-- Клавиатура
-	if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-		direction += camCF.LookVector
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-		direction -= camCF.LookVector
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-		direction -= camCF.RightVector
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-		direction += camCF.RightVector
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-		direction += Vector3.yAxis
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.C) then
-		direction -= Vector3.yAxis
+local function StartTarget()
+	if not Target or not Alive(Target) then
+		if StatusLabel then StatusLabel.Text = "Статус: выбери живую цель" end
+		return false
 	end
 
-	-- Мобилка / геймпад
-	local hum = GetHumanoid()
-	if hum and hum.MoveDirection.Magnitude > 0.05 then
-		direction = hum.MoveDirection
+	if connection then connection:Disconnect() end
+	isActive = true
+	circleAngle = 0
+	if StatusLabel then
+		StatusLabel.Text = "Статус: активен • " .. Target.DisplayName
 	end
+	connection = RunService.Heartbeat:Connect(MoveToTarget)
+	return true
+end
 
-	return direction
+local function StopTarget()
+	isActive = false
+	if connection then
+		connection:Disconnect()
+		connection = nil
+	end
+	local root = Root(LocalPlayer)
+	if root then root.AssemblyLinearVelocity = Vector3.zero end
+	RestoreNoclip()
+	if StatusLabel then StatusLabel.Text = "Статус: остановлен" end
 end
 
 --------------------------------------------------
 -- GUI
 --------------------------------------------------
-
 local Gui = Instance.new("ScreenGui")
-Gui.Name = "AITargetGUI"
+Gui.Name = "Дрочка типовGUI"
 Gui.ResetOnSpawn = false
 Gui.IgnoreGuiInset = true
 Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 Gui.Parent = PlayerGui
 
 local Main = Instance.new("Frame")
-Main.Name = "Main"
-Main.Size = UDim2.fromOffset(300, 400)
-Main.Position = UDim2.new(0.5, -150, 0.5, -200)
-Main.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
+Main.Size = UDim2.fromOffset(300, 460)
+Main.Position = UDim2.new(0.5, -150, 0.5, -230)
+Main.BackgroundColor3 = Color3.fromRGB(17, 19, 26)
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.Parent = Gui
-
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
 
 local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(70, 85, 115)
-stroke.Transparency = 0.4
+stroke.Color = Color3.fromRGB(65, 80, 115)
+stroke.Transparency = 0.35
 stroke.Parent = Main
 
+-- Header
 local Header = Instance.new("Frame")
 Header.Size = UDim2.new(1, 0, 0, 40)
-Header.BackgroundColor3 = Color3.fromRGB(24, 27, 36)
+Header.BackgroundColor3 = Color3.fromRGB(25, 27, 36)
 Header.BorderSizePixel = 0
 Header.Active = true
 Header.Parent = Main
 Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 12)
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -70, 1, 0)
+Title.Size = UDim2.new(1, -90, 1, 0)
 Title.Position = UDim2.fromOffset(12, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "◈ AI Target"
+Title.Text = "◈ Дрочка типов"
 Title.TextColor3 = Color3.fromRGB(245, 247, 250)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 15
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
 
-local Minimize = Instance.new("TextButton")
-Minimize.Size = UDim2.fromOffset(32, 28)
-Minimize.Position = UDim2.new(1, -38, 0, 6)
-Minimize.BackgroundColor3 = Color3.fromRGB(45, 50, 65)
-Minimize.Text = "−"
-Minimize.TextColor3 = Color3.fromRGB(240, 243, 248)
-Minimize.Font = Enum.Font.GothamBold
-Minimize.TextSize = 18
-Minimize.BorderSizePixel = 0
-Minimize.Parent = Header
-Instance.new("UICorner", Minimize).CornerRadius = UDim.new(0, 7)
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.fromOffset(30, 28)
+MinimizeBtn.Position = UDim2.new(1, -68, 0, 6)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(48, 52, 68)
+MinimizeBtn.Text = "−"
+MinimizeBtn.TextColor3 = Color3.fromRGB(240, 243, 248)
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 18
+MinimizeBtn.BorderSizePixel = 0
+MinimizeBtn.Parent = Header
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 7)
 
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.fromOffset(30, 28)
+CloseBtn.Position = UDim2.new(1, -34, 0, 6)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(140, 48, 55)
+CloseBtn.Text = "×"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 18
+CloseBtn.BorderSizePixel = 0
+CloseBtn.Parent = Header
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 7)
+
+-- Tabs
 local Tabs = Instance.new("Frame")
-Tabs.Size = UDim2.new(1, -14, 0, 32)
+Tabs.Size = UDim2.new(1, -14, 0, 34)
 Tabs.Position = UDim2.fromOffset(7, 46)
 Tabs.BackgroundTransparency = 1
 Tabs.Parent = Main
 
 local tabLayout = Instance.new("UIListLayout")
 tabLayout.FillDirection = Enum.FillDirection.Horizontal
-tabLayout.Padding = UDim.new(0, 5)
+tabLayout.Padding = UDim.new(0, 6)
 tabLayout.Parent = Tabs
 
 local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -14, 1, -90)
-Content.Position = UDim2.fromOffset(7, 84)
+Content.Size = UDim2.new(1, -14, 1, -160)
+Content.Position = UDim2.fromOffset(7, 86)
 Content.BackgroundTransparency = 1
 Content.Parent = Main
+
+-- Нижняя панель
+local BottomBar = Instance.new("Frame")
+BottomBar.Size = UDim2.new(1, -14, 0, 110)
+BottomBar.Position = UDim2.new(0, 7, 1, -118)
+BottomBar.BackgroundTransparency = 1
+BottomBar.Parent = Main
 
 --------------------------------------------------
 -- UI Helpers
 --------------------------------------------------
-
 local function Corner(obj, r)
 	local c = Instance.new("UICorner")
 	c.CornerRadius = UDim.new(0, r or 8)
 	c.Parent = obj
 end
 
-local function Button(parent, text, height)
+local function MakeButton(parent, text, height)
 	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(1, 0, 0, height or 34)
-	b.BackgroundColor3 = Color3.fromRGB(40, 45, 58)
+	b.Size = UDim2.new(1, 0, 0, height or 36)
+	b.BackgroundColor3 = Color3.fromRGB(42, 46, 60)
 	b.TextColor3 = Color3.fromRGB(235, 238, 245)
 	b.Text = text
 	b.Font = Enum.Font.GothamMedium
-	b.TextSize = 13
+	b.TextSize = 14
 	b.BorderSizePixel = 0
 	b.AutoButtonColor = true
 	b.Parent = parent
@@ -315,7 +464,7 @@ local function Button(parent, text, height)
 	return b
 end
 
-local function Label(parent, text, height)
+local function MakeLabel(parent, text, height)
 	local l = Instance.new("TextLabel")
 	l.Size = UDim2.new(1, 0, 0, height or 22)
 	l.BackgroundTransparency = 1
@@ -328,63 +477,65 @@ local function Label(parent, text, height)
 	return l
 end
 
-local function Toggle(parent, text, value, callback)
-	local b = Button(parent, text .. ": " .. (value and "ON" or "OFF"), 34)
-	b.BackgroundColor3 = value and Color3.fromRGB(45, 125, 80) or Color3.fromRGB(40, 45, 58)
-
+local function MakeToggle(parent, text, value, callback)
+	local b = MakeButton(parent, text .. ": " .. (value and "ON" or "OFF"), 34)
+	b.BackgroundColor3 = value and Color3.fromRGB(45, 130, 80) or Color3.fromRGB(42, 46, 60)
 	b.MouseButton1Click:Connect(function()
 		value = not value
 		b.Text = text .. ": " .. (value and "ON" or "OFF")
-		b.BackgroundColor3 = value and Color3.fromRGB(45, 125, 80) or Color3.fromRGB(40, 45, 58)
+		b.BackgroundColor3 = value and Color3.fromRGB(45, 130, 80) or Color3.fromRGB(42, 46, 60)
 		callback(value)
 	end)
 	return b
 end
 
-local function Slider(parent, text, key, minV, maxV, step)
+local function MakeSlider(parent, text, key, minV, maxV, step)
 	local holder = Instance.new("Frame")
 	holder.Size = UDim2.new(1, 0, 0, 52)
 	holder.BackgroundTransparency = 1
 	holder.Parent = parent
 
-	local name = Label(holder, text, 20)
-	name.Size = UDim2.new(1, -60, 0, 20)
+	local name = MakeLabel(holder, text, 18)
+	name.Size = UDim2.new(1, -55, 0, 18)
 
-	local valueText = Label(holder, tostring(Settings[key]), 20)
-	valueText.Size = UDim2.fromOffset(55, 20)
-	valueText.Position = UDim2.new(1, -55, 0, 0)
+	local valueText = MakeLabel(holder, tostring(Settings[key]), 18)
+	valueText.Size = UDim2.fromOffset(50, 18)
+	valueText.Position = UDim2.new(1, -50, 0, 0)
 	valueText.TextXAlignment = Enum.TextXAlignment.Right
 	valueText.TextColor3 = Color3.fromRGB(120, 180, 255)
 	valueText.Font = Enum.Font.GothamBold
-	valueText.TextSize = 13
 
 	local bar = Instance.new("Frame")
 	bar.Size = UDim2.new(1, 0, 0, 8)
-	bar.Position = UDim2.fromOffset(0, 30)
+	bar.Position = UDim2.fromOffset(0, 28)
 	bar.BackgroundColor3 = Color3.fromRGB(48, 54, 68)
 	bar.BorderSizePixel = 0
 	bar.Active = true
 	bar.Parent = holder
-	Corner(bar, 6)
+	Corner(bar, 5)
 
 	local fill = Instance.new("Frame")
 	fill.BackgroundColor3 = Color3.fromRGB(90, 150, 235)
 	fill.BorderSizePixel = 0
 	fill.Parent = bar
-	Corner(fill, 6)
+	Corner(fill, 5)
 
 	local dragging = false
-
 	local function setFromX(x)
 		local w = math.max(bar.AbsoluteSize.X, 1)
 		local alpha = math.clamp((x - bar.AbsolutePosition.X) / w, 0, 1)
 		local raw = minV + (maxV - minV) * alpha
 		local value = math.floor(raw / step + 0.5) * step
 		value = math.clamp(value, minV, maxV)
-
 		Settings[key] = value
 		fill.Size = UDim2.new((value - minV) / (maxV - minV), 0, 1, 0)
 		valueText.Text = string.format("%g", value)
+
+		-- Мгновенно применяем Speedhack если он включен
+		if key == "SpeedValue" and Settings.SpeedHack then
+			local hum = GetHumanoid()
+			if hum then hum.WalkSpeed = value end
+		end
 	end
 
 	bar.InputBegan:Connect(function(input)
@@ -393,13 +544,11 @@ local function Slider(parent, text, key, minV, maxV, step)
 			setFromX(input.Position.X)
 		end
 	end)
-
 	UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			setFromX(input.Position.X)
 		end
 	end)
-
 	UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
@@ -409,14 +558,12 @@ local function Slider(parent, text, key, minV, maxV, step)
 	task.defer(function()
 		fill.Size = UDim2.new((Settings[key] - minV) / (maxV - minV), 0, 1, 0)
 	end)
-
 	return holder
 end
 
 -- Drag
 do
 	local dragging, dragStart, startPos = false, nil, nil
-
 	Header.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
@@ -424,17 +571,12 @@ do
 			startPos = Main.Position
 		end
 	end)
-
 	UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			local delta = input.Position - dragStart
-			Main.Position = UDim2.new(
-				startPos.X.Scale, startPos.X.Offset + delta.X,
-				startPos.Y.Scale, startPos.Y.Offset + delta.Y
-			)
+			Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 		end
 	end)
-
 	UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
@@ -445,7 +587,6 @@ end
 --------------------------------------------------
 -- Страницы
 --------------------------------------------------
-
 local Pages, TabButtons = {}, {}
 
 local function NewPage(name)
@@ -475,33 +616,30 @@ local function NewPage(name)
 end
 
 local function NewTab(name)
-	local b = Button(Tabs, name, 32)
-	b.Size = UDim2.new(0.333, -4, 0, 32)
+	local b = MakeButton(Tabs, name, 34)
+	b.Size = UDim2.new(0.5, -4, 0, 34)
 	TabButtons[name] = b
 	return b
 end
 
 local function ShowPage(name)
-	for n, p in pairs(Pages) do
-		p.Visible = (n == name)
-	end
+	for n, p in pairs(Pages) do p.Visible = (n == name) end
 	for n, b in pairs(TabButtons) do
-		b.BackgroundColor3 = (n == name) and Color3.fromRGB(60, 80, 115) or Color3.fromRGB(40, 45, 58)
+		b.BackgroundColor3 = (n == name) and Color3.fromRGB(55, 75, 115) or Color3.fromRGB(42, 46, 60)
 	end
 end
 
 --------------------------------------------------
 -- Главная
 --------------------------------------------------
-
 local MainPage = NewPage("Главная")
 NewTab("Главная")
 
-Label(MainPage, "Цели", 22)
+MakeLabel(MainPage, "Выбор цели", 20)
 
 local Search = Instance.new("TextBox")
 Search.Size = UDim2.new(1, 0, 0, 34)
-Search.BackgroundColor3 = Color3.fromRGB(30, 35, 46)
+Search.BackgroundColor3 = Color3.fromRGB(30, 34, 46)
 Search.TextColor3 = Color3.fromRGB(240, 243, 248)
 Search.PlaceholderColor3 = Color3.fromRGB(130, 138, 152)
 Search.PlaceholderText = "Поиск..."
@@ -518,12 +656,12 @@ local searchPad = Instance.new("UIPadding")
 searchPad.PaddingLeft = UDim.new(0, 10)
 searchPad.Parent = Search
 
-local TargetInfo = Label(MainPage, "Цель: не выбрана", 22)
+local TargetInfo = MakeLabel(MainPage, "Цель: не выбрана", 20)
 TargetInfo.TextColor3 = Color3.fromRGB(130, 190, 255)
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, 0, 0, 140)
-PlayerList.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
+PlayerList.Size = UDim2.new(1, 0, 0, 155)
+PlayerList.BackgroundColor3 = Color3.fromRGB(23, 27, 35)
 PlayerList.BorderSizePixel = 0
 PlayerList.ScrollBarThickness = 3
 PlayerList.CanvasSize = UDim2.new()
@@ -539,7 +677,7 @@ listPad.PaddingRight = UDim.new(0, 5)
 listPad.Parent = PlayerList
 
 local listLayout = Instance.new("UIListLayout")
-listLayout.Padding = UDim.new(0, 4)
+listLayout.Padding = UDim.new(0, 5)
 listLayout.SortOrder = Enum.SortOrder.Name
 listLayout.Parent = PlayerList
 
@@ -558,32 +696,22 @@ local function RefreshPlayers()
 	for _, c in ipairs(PlayerList:GetChildren()) do
 		if c:IsA("TextButton") then c:Destroy() end
 	end
-
 	local query = string.lower(Search.Text or "")
 	local list = {}
 	for _, p in ipairs(Players:GetPlayers()) do
 		if p ~= LocalPlayer then table.insert(list, p) end
 	end
-	table.sort(list, function(a, b)
-		return string.lower(a.DisplayName) < string.lower(b.DisplayName)
-	end)
+	table.sort(list, function(a, b) return string.lower(a.DisplayName) < string.lower(b.DisplayName) end)
 
 	for _, p in ipairs(list) do
 		local d, u = string.lower(p.DisplayName), string.lower(p.Name)
 		if query == "" or string.find(d, query, 1, true) or string.find(u, query, 1, true) then
 			local alive = Alive(p)
-			local btn = Button(PlayerList, (alive and "● " or "○ ") .. p.DisplayName, 32)
-			btn.BackgroundColor3 = (p == Target) and Color3.fromRGB(58, 85, 125)
-				or (alive and Color3.fromRGB(35, 42, 55) or Color3.fromRGB(48, 42, 45))
+			local btn = MakeButton(PlayerList, (alive and "● " or "○ ") .. p.DisplayName, 34)
+			btn.BackgroundColor3 = (p == Target) and Color3.fromRGB(55, 85, 130) or (alive and Color3.fromRGB(36, 42, 55) or Color3.fromRGB(48, 40, 42))
 			btn.TextColor3 = alive and Color3.fromRGB(235, 238, 245) or Color3.fromRGB(140, 145, 155)
-
 			btn.MouseButton1Click:Connect(function()
-				if not Alive(p) then
-					Target = nil
-				else
-					Target = p
-					Settings.AutoTarget = false
-				end
+				Target = Alive(p) and p or nil
 				UpdateTargetInfo()
 				RefreshPlayers()
 			end)
@@ -595,185 +723,152 @@ end
 Search:GetPropertyChangedSignal("Text"):Connect(RefreshPlayers)
 Players.PlayerAdded:Connect(function() task.defer(RefreshPlayers) end)
 Players.PlayerRemoving:Connect(function(p)
-	if p == Target then Target = nil Active = false end
+	if p == Target then Target = nil StopTarget() end
 	task.defer(RefreshPlayers)
+	if Settings.ESP_Enabled then task.defer(RefreshESP) end
 end)
 
-Button(MainPage, "Выбрать ближайшую", 34).MouseButton1Click:Connect(function()
+MakeButton(MainPage, "Выбрать ближайшую", 36).MouseButton1Click:Connect(function()
 	local n = NearestTarget()
-	if n then
-		Target = n
-		Settings.AutoTarget = false
-		RefreshPlayers()
-	end
-end)
-
-Toggle(MainPage, "Автоцель", Settings.AutoTarget, function(v)
-	Settings.AutoTarget = v
-	if v then
-		Target = NearestTarget()
-		RefreshPlayers()
-	end
-end)
-
-local startBtn = Button(MainPage, "▶  ЗАПУСТИТЬ", 38)
-startBtn.BackgroundColor3 = Color3.fromRGB(45, 125, 80)
-
-local stopBtn = Button(MainPage, "■  ОСТАНОВИТЬ", 34)
-stopBtn.BackgroundColor3 = Color3.fromRGB(110, 50, 55)
-
-local Status = Label(MainPage, "Статус: остановлен", 22)
-Status.TextColor3 = Color3.fromRGB(150, 160, 175)
-
---------------------------------------------------
--- Бой
---------------------------------------------------
-
-local CombatPage = NewPage("Бой")
-NewTab("Бой")
-
-Label(CombatPage, "Настройки боя", 24)
-Slider(CombatPage, "Радиус атаки", "AttackRange", 2, 25, 1)
-Slider(CombatPage, "Задержка атаки", "AttackCooldown", 0.2, 3, 0.05)
-Toggle(CombatPage, "Автовыбор оружия", Settings.AutoWeapon, function(v)
-	Settings.AutoWeapon = v
+	if n then Target = n RefreshPlayers() end
 end)
 
 --------------------------------------------------
--- Movement
+-- Нижние кнопки
 --------------------------------------------------
+local startBtn = MakeButton(BottomBar, "▶  ЗАПУСТИТЬ", 40)
+startBtn.BackgroundColor3 = Color3.fromRGB(45, 130, 80)
+startBtn.Position = UDim2.fromOffset(0, 0)
 
-local MovementPage = NewPage("Movement")
-NewTab("Movement")
+local stopBtn = MakeButton(BottomBar, "■  ОСТАНОВИТЬ", 36)
+stopBtn.BackgroundColor3 = Color3.fromRGB(130, 50, 55)
+stopBtn.Position = UDim2.fromOffset(0, 46)
 
-Label(MovementPage, "Движение", 24)
+StatusLabel = MakeLabel(BottomBar, "Статус: остановлен", 20)
+StatusLabel.Position = UDim2.fromOffset(0, 88)
+StatusLabel.TextColor3 = Color3.fromRGB(160, 170, 185)
 
--- Fly кнопка (сохраняем ссылку)
-FlyButton = Toggle(MovementPage, "Fly", Settings.Fly, function(v)
-	SetFly(v)
-end)
+startBtn.MouseButton1Click:Connect(StartTarget)
+stopBtn.MouseButton1Click:Connect(StopTarget)
 
-Toggle(MovementPage, "Noclip", Settings.Noclip, function(v)
+--------------------------------------------------
+-- Настройки
+--------------------------------------------------
+local SettingsPage = NewPage("Настройки")
+NewTab("Настройки")
+
+MakeLabel(SettingsPage, "Таргет", 22)
+MakeSlider(SettingsPage, "Скорость полёта", "FlySpeed", 20, 150, 5)
+MakeSlider(SettingsPage, "Радиус кружения", "CircleRadius", 2, 30, 1)
+MakeSlider(SettingsPage, "Высота", "CircleHeight", -10, 25, 1)
+MakeSlider(SettingsPage, "Скорость кружения", "CircleSpeed", 0.1, 3, 0.05)
+MakeSlider(SettingsPage, "Радиус атаки", "AttackRange", 2, 20, 1)
+MakeSlider(SettingsPage, "Задержка атаки", "AttackCooldown", 0.3, 3, 0.1)
+MakeSlider(SettingsPage, "Слот оружия", "WeaponSlot", 1, 10, 1)
+MakeToggle(SettingsPage, "Автооружие", Settings.AutoWeapon, function(v) Settings.AutoWeapon = v end)
+
+MakeLabel(SettingsPage, "Движение", 22)
+MakeToggle(SettingsPage, "Noclip", Settings.Noclip, function(v)
 	Settings.Noclip = v
 	if not v then RestoreNoclip() end
 end)
 
-Slider(MovementPage, "Скорость Fly", "FlySpeed", 15, 150, 5)
-
---------------------------------------------------
--- Кнопки управления
---------------------------------------------------
-
-startBtn.MouseButton1Click:Connect(function()
-	if Settings.AutoTarget then
-		Target = NearestTarget()
-	end
-	if not Target or not Alive(Target) then
-		Status.Text = "Статус: выбери живую цель"
-		return
-	end
-
-	Active = true
-	SetFly(true) -- автоматически включаем полёт
-	Status.Text = "Статус: активен • " .. Target.DisplayName
-end)
-
-stopBtn.MouseButton1Click:Connect(function()
-	Active = false
-	-- Fly НЕ выключаем — можешь продолжать летать
-	Status.Text = "Статус: остановлен"
-end)
-
---------------------------------------------------
--- Runtime
---------------------------------------------------
-
-RunService.Stepped:Connect(function()
-	if Settings.Noclip then
-		ApplyNoclip()
+MakeToggle(SettingsPage, "Speedhack", Settings.SpeedHack, function(v)
+	Settings.SpeedHack = v
+	local hum = GetHumanoid()
+	if hum then
+		hum.WalkSpeed = v and Settings.SpeedValue or 16
 	end
 end)
+MakeSlider(SettingsPage, "Скорость Speedhack", "SpeedValue", 16, 150, 1)
 
-RunService.Heartbeat:Connect(function()
-	UpdateTargetInfo()
-
-	-- Свободный полёт (работает всегда, когда Fly = true)
-	if Settings.Fly then
-		local root = Root(LocalPlayer)
-		if root then
-			local dir = GetFlyDirection()
-			if dir.Magnitude > 0.05 then
-				root.AssemblyLinearVelocity = dir.Unit * Settings.FlySpeed
-			else
-				root.AssemblyLinearVelocity = Vector3.zero
-			end
-		end
-	end
-
-	-- Таргет (только атака)
-	if not Active then return end
-
-	if Settings.AutoTarget then
-		local n = NearestTarget()
-		if n then Target = n end
-	end
-
-	if not Target or not Alive(Target) then
-		Active = false
-		Status.Text = "Статус: цель потеряна"
-		return
-	end
-
-	local myRoot = Root(LocalPlayer)
-	local tRoot = Root(Target)
-	if not myRoot or not tRoot then return end
-
-	if (tRoot.Position - myRoot.Position).Magnitude <= Settings.AttackRange then
-		Attack()
-	end
+MakeLabel(SettingsPage, "ESP", 22)
+MakeToggle(SettingsPage, "ESP Вкл", Settings.ESP_Enabled, function(v)
+	Settings.ESP_Enabled = v
+	if v then RefreshESP() else ClearESP() end
 end)
-
-LocalPlayer.CharacterAdded:Connect(function()
-	Active = false
-	Target = nil
-	RestoreNoclip()
-	SetFly(false)
-	task.defer(RefreshPlayers)
-	Status.Text = "Статус: респавн"
+MakeToggle(SettingsPage, "Подсветка", Settings.ESP_Highlight, function(v)
+	Settings.ESP_Highlight = v
+	if Settings.ESP_Enabled then RefreshESP() end
+end)
+MakeToggle(SettingsPage, "Имя", Settings.ESP_Name, function(v)
+	Settings.ESP_Name = v
+	if Settings.ESP_Enabled then RefreshESP() end
+end)
+MakeToggle(SettingsPage, "Дистанция", Settings.ESP_Distance, function(v)
+	Settings.ESP_Distance = v
+	if Settings.ESP_Enabled then RefreshESP() end
 end)
 
 --------------------------------------------------
--- Minimize
+-- Сворачивание / закрытие
 --------------------------------------------------
-
-local minimized = false
-
-Minimize.MouseButton1Click:Connect(function()
-	minimized = not minimized
-	if minimized then
+MinimizeBtn.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
 		Tabs.Visible = false
 		Content.Visible = false
-		TweenService:Create(Main, TweenInfo.new(0.15), {Size = UDim2.fromOffset(150, 40)}):Play()
-		Minimize.Text = "+"
+		BottomBar.Visible = false
+		TweenService:Create(Main, TweenInfo.new(0.15), {Size = UDim2.fromOffset(160, 40)}):Play()
+		MinimizeBtn.Text = "+"
 	else
-		TweenService:Create(Main, TweenInfo.new(0.15), {Size = UDim2.fromOffset(300, 400)}):Play()
+		TweenService:Create(Main, TweenInfo.new(0.15), {Size = UDim2.fromOffset(300, 460)}):Play()
 		task.delay(0.12, function()
-			if not minimized then
+			if not isMinimized then
 				Tabs.Visible = true
 				Content.Visible = true
+				BottomBar.Visible = true
 			end
 		end)
-		Minimize.Text = "−"
+		MinimizeBtn.Text = "−"
 	end
 end)
 
+CloseBtn.MouseButton1Click:Connect(function()
+	StopTarget()
+	RestoreNoclip()
+	ClearESP()
+	local hum = GetHumanoid()
+	if hum then hum.WalkSpeed = 16 end
+	Gui:Destroy()
+end)
+
+--------------------------------------------------
+-- Финал
+--------------------------------------------------
 for name, btn in pairs(TabButtons) do
-	btn.MouseButton1Click:Connect(function()
-		ShowPage(name)
-	end)
+	btn.MouseButton1Click:Connect(function() ShowPage(name) end)
 end
 
 ShowPage("Главная")
 RefreshPlayers()
 
-print("[AI Target] v6.4 loaded — Auto Fly on Target")
+RunService.Heartbeat:Connect(function()
+	UpdateTargetInfo()
+	if Settings.SpeedHack then
+		local hum = GetHumanoid()
+		if hum and hum.WalkSpeed ~= Settings.SpeedValue then
+			hum.WalkSpeed = Settings.SpeedValue
+		end
+	end
+end)
+
+Players.PlayerAdded:Connect(function(plr)
+	plr.CharacterAdded:Connect(function()
+		if Settings.ESP_Enabled then
+			task.wait(0.6)
+			CreateESP(plr)
+		end
+	end)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+	StopTarget()
+	Target = nil
+	RestoreNoclip()
+	task.defer(RefreshPlayers)
+	if Settings.ESP_Enabled then task.defer(RefreshESP) end
+	if StatusLabel then StatusLabel.Text = "Статус: респавн" end
+end)
+
+print("[Дрочка типов] v4.2 — ESP раздельный + Speedhack ползунок")
