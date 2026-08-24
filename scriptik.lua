@@ -1,6 +1,6 @@
 --[[
-    Задрочка типов v5.3
-    Исправлен noclip + одна кнопка + килаура + центр настроек
+    Задрочка типов v5.4
+    Килаура мгновенно сбрасывает мертвую цель + уменьшен GUI
 ]]
 
 local Players          = game:GetService("Players")
@@ -343,9 +343,8 @@ RunService.Heartbeat:Connect(function(dt)
 	-- ===== КИЛАУРА =====
 	if not isActive or not Target then return end
 
-	-- Автоматический поиск новой цели если текущая мертва
-	local tHum = Target.Character and Target.Character:FindFirstChildOfClass("Humanoid")
-	if not Target.Parent or (tHum and tHum.Health <= 0) then
+	-- МГНОВЕННЫЙ СБРОС МЕРТВОЙ ЦЕЛИ
+	if not Alive(Target) then
 		local n = Nearest()
 		if n then
 			Target = n
@@ -431,8 +430,8 @@ Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 Gui.Parent = PlayerGui
 
 local Main = Instance.new("Frame")
-Main.Size = UDim2.fromOffset(255, 370)
-Main.Position = UDim2.new(0.5, -127, 0.5, -185)
+Main.Size = UDim2.fromOffset(220, 320)
+Main.Position = UDim2.new(0.5, -110, 0.5, -160)
 Main.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
@@ -892,10 +891,10 @@ MinBtn.MouseButton1Click:Connect(function()
 		Tabs.Visible = false
 		Content.Visible = false
 		Bottom.Visible = false
-		TweenService:Create(Main, TweenInfo.new(0.13), {Size = UDim2.fromOffset(140, 32)}):Play()
+		TweenService:Create(Main, TweenInfo.new(0.13), {Size = UDim2.fromOffset(120, 32)}):Play()
 		MinBtn.Text = "+"
 	else
-		TweenService:Create(Main, TweenInfo.new(0.13), {Size = UDim2.fromOffset(255, 370)}):Play()
+		TweenService:Create(Main, TweenInfo.new(0.13), {Size = UDim2.fromOffset(220, 320)}):Play()
 		task.delay(0.11, function()
 			if not isMinimized then
 				Tabs.Visible = true
@@ -974,4 +973,4 @@ end)
 
 RunService.Heartbeat:Connect(updInfo)
 
-print("[Задрочка типов] v5.3 загружена")
+print("[Задрочка типов] v5.4 загружена")
