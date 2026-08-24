@@ -1,13 +1,13 @@
 --[[
-    Задрочка типов v5.0
-    Оптимизированная мобильная версия
+    Задрочка типов v5.2
+    За спиной + исправлена потеря цели + Gameplay Paused при телепорте
 ]]
 
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
-local UserInputService  = game:GetService("UserInputService")
-local TweenService      = game:GetService("TweenService")
-local VirtualUser       = game:GetService("VirtualUser")
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+local VirtualUser      = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then return end
@@ -15,7 +15,6 @@ if not LocalPlayer then return end
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 8)
 if not PlayerGui then return end
 
--- Удаляем старую копию
 local old = PlayerGui:FindFirstChild("ZadrochkaTipov")
 if old then old:Destroy() end
 
@@ -23,41 +22,54 @@ if old then old:Destroy() end
 -- Настройки
 --------------------------------------------------
 local S = {
-	FlySpeed       = 60,
-	CircleRadius   = 8,
-	CircleHeight   = 4,
-	CircleSpeed    = 0.65,
-	AttackRange    = 6,
-	AttackCooldown = 0.9,
-	AutoWeapon     = true,
-	WeaponSlot     = 2,
-	Noclip         = false,
-	SpeedHack      = false,
-	SpeedValue     = 50,
-	ESP            = false,
-	ESP_Highlight  = true,
-	ESP_Name       = true,
-	ESP_Distance   = true,
+	BehindSpeed     = 70,
+	BehindDistance  = 3.5,
+	BehindHeight    = 1.5,
+	JitterAmount    = 1.2,
+	JitterSpeed     = 8,
+
+	AttackRange     = 7,
+	AttackCooldown  = 0.75,
+
+	AutoWeapon      = true,
+	WeaponSlot      = 2,
+
+	Noclip          = false,
+	SpeedHack       = false,
+	SpeedValue      = 50,
+
+	ESP             = false,
+	ESP_Highlight   = true,
+	ESP_Name        = true,
+	ESP_Distance    = true,
 }
 
-local Target          = nil
-local isActive        = false
-local circleAngle     = 0
-local lastAttack      = 0
-local noclipCache     = {}
-local isMinimized     = false
-local StatusLabel     = nil
-local espFolder       = nil
-local espData         = {} -- [player] = {hl, bb, label}
+local Target       = nil
+local isActive     = false
+local lastAttack   = 0
+local noclipCache  = {}
+local isMinimized  = false
+local StatusLabel  = nil
+local espFolder    = nil
+local espData      = {}
+local settingsOpen = false
 
 --------------------------------------------------
--- Анти-AFK / Gameplay Paused
+-- Анти Gameplay Paused / Anti-AFK
 --------------------------------------------------
-LocalPlayer.Idled:Connect(function()
+local function RemovePaused()
 	pcall(function()
 		VirtualUser:CaptureController()
 		VirtualUser:ClickButton2(Vector2.new())
 	end)
+end
+
+LocalPlayer.Idled:Connect(RemovePaused)
+
+task.spawn(function()
+	while task.wait(18) do
+		RemovePaused()
+	end
 end)
 
 --------------------------------------------------
@@ -69,7 +81,7 @@ local function Alive(plr)
 	if not char then return false end
 	local hum  = char:FindFirstChildOfClass("Humanoid")
 	local root = char:FindFirstChild("HumanoidRootPart")
-	return hum and hum.Health > 0 and root
+	return hum ~= nil and hum.Health > 0 and root ~= nil
 end
 
 local function Root(plr)
@@ -98,12 +110,17 @@ RunService.Stepped:Connect(function()
 	if not S.Noclip then return end
 	local char = LocalPlayer.Character
 	if not char then return end
+
 	for _, obj in ipairs(char:GetDescendants()) do
 		if obj:IsA("BasePart") then
-			if noclipCache[obj] == nil then
-				noclipCache[obj] = obj.CanCollide
+			if obj.Name == "HumanoidRootPart" then
+				obj.CanCollide = true
+			else
+				if noclipCache[obj] == nil then
+					noclipCache[obj] = obj.CanCollide
+				end
+				obj.CanCollide = false
 			end
-			obj.CanCollide = false
 		end
 	end
 end)
@@ -125,20 +142,24 @@ local function EquipWeapon()
 			table.insert(tools, item)
 		end
 	end
-	local slot = math.clamp(S.WeaponSlot, 1, math.max(#tools, 1))
-	local tool = tools[slot]
-	if tool then
-		pcall(hum.EquipTool, hum, tool)
-	end
+	if #tools == 0 then return end
+	local slot = math.clamp(S.WeaponSlot, 1, #tools)
+	pcall(function()
+		hum:EquipTool(tools[slot])
+	end)
 end
 
 local function Attack()
 	if not Target or not Alive(Target) then return end
 	if tick() - lastAttack < S.AttackCooldown then return end
+
 	EquipWeapon()
-	local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+
+	local char = LocalPlayer.Character
+	if not char then return end
+	local tool = char:FindFirstChildOfClass("Tool")
 	if tool then
-		if pcall(tool.Activate, tool) then
+		if pcall(function() tool:Activate() end) then
 			lastAttack = tick()
 		end
 	end
@@ -152,14 +173,16 @@ local function Nearest()
 		if Alive(p) then
 			local r = Root(p)
 			local d = (r.Position - my.Position).Magnitude
-			if d < bestD then best, bestD = p, d end
+			if d < bestD then
+				best, bestD = p, d
+			end
 		end
 	end
 	return best
 end
 
 --------------------------------------------------
--- ESP (оптимизированный)
+-- ESP
 --------------------------------------------------
 local function ClearESP()
 	for _, d in pairs(espData) do
@@ -173,14 +196,6 @@ local function ClearESP()
 	end
 end
 
-local function EnsureESPFolder()
-	if not espFolder then
-		espFolder = Instance.new("Folder")
-		espFolder.Name = "ZadrochkaESP"
-		espFolder.Parent = PlayerGui
-	end
-end
-
 local function CreateESP(plr)
 	if not S.ESP or plr == LocalPlayer or espData[plr] then return end
 	local char = plr.Character
@@ -188,7 +203,12 @@ local function CreateESP(plr)
 	local root = char:FindFirstChild("HumanoidRootPart")
 	if not root then return end
 
-	EnsureESPFolder()
+	if not espFolder then
+		espFolder = Instance.new("Folder")
+		espFolder.Name = "ZadrochkaESP"
+		espFolder.Parent = PlayerGui
+	end
+
 	local data = {}
 
 	if S.ESP_Highlight then
@@ -206,19 +226,19 @@ local function CreateESP(plr)
 	if S.ESP_Name or S.ESP_Distance then
 		local bb = Instance.new("BillboardGui")
 		bb.Adornee = root
-		bb.Size = UDim2.fromOffset(120, 36)
-		bb.StudsOffset = Vector3.new(0, 3.2, 0)
+		bb.Size = UDim2.fromOffset(110, 34)
+		bb.StudsOffset = Vector3.new(0, 3.1, 0)
 		bb.AlwaysOnTop = true
-		bb.MaxDistance = 20000
+		bb.MaxDistance = 30000
 		bb.Parent = espFolder
 
 		local lbl = Instance.new("TextLabel")
 		lbl.Size = UDim2.new(1, 0, 1, 0)
 		lbl.BackgroundTransparency = 1
 		lbl.TextColor3 = Color3.new(1, 1, 1)
-		lbl.TextStrokeTransparency = 0.3
+		lbl.TextStrokeTransparency = 0.25
 		lbl.Font = Enum.Font.GothamBold
-		lbl.TextSize = 12
+		lbl.TextSize = 11
 		lbl.Parent = bb
 
 		data.bb = bb
@@ -237,30 +257,31 @@ local function RefreshESP()
 end
 
 --------------------------------------------------
--- Таргет логика
+-- Таргет
 --------------------------------------------------
 local function StopTarget()
 	isActive = false
 	local root = Root(LocalPlayer)
-	if root then root.AssemblyLinearVelocity = Vector3.zero end
-	RestoreNoclip()
+	if root then
+		root.AssemblyLinearVelocity = Vector3.zero
+	end
+	if not S.Noclip then RestoreNoclip() end
 	if StatusLabel then StatusLabel.Text = "Статус: остановлен" end
 end
 
 local function StartTarget()
-	if not Target or not Alive(Target) then
+	if not Target then
 		if StatusLabel then StatusLabel.Text = "Статус: выбери цель" end
 		return
 	end
 	isActive = true
-	circleAngle = 0
 	if StatusLabel then
-		StatusLabel.Text = "Статус: активен • " .. Target.DisplayName
+		StatusLabel.Text = "Статус: активен • " .. (Target.DisplayName or Target.Name)
 	end
 end
 
 --------------------------------------------------
--- Главный цикл (всё в одном Heartbeat)
+-- Главный цикл
 --------------------------------------------------
 RunService.Heartbeat:Connect(function(dt)
 	-- Speedhack
@@ -271,24 +292,19 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- ESP текст
+	-- ESP
 	if S.ESP then
 		local myRoot = Root(LocalPlayer)
 		for plr, data in pairs(espData) do
-			if not Alive(plr) then
+			if not plr.Parent then
 				if data.hl then data.hl:Destroy() end
 				if data.bb then data.bb:Destroy() end
 				espData[plr] = nil
 			else
-				-- обновляем adornee если нужно
 				local char = plr.Character
 				local root = char and char:FindFirstChild("HumanoidRootPart")
-				if data.hl and char and data.hl.Adornee ~= char then
-					data.hl.Adornee = char
-				end
-				if data.bb and root then
-					data.bb.Adornee = root
-				end
+				if data.hl and char then data.hl.Adornee = char end
+				if data.bb and root then data.bb.Adornee = root end
 				if data.lbl then
 					local parts = {}
 					if S.ESP_Name then table.insert(parts, plr.DisplayName) end
@@ -301,38 +317,66 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- Таргет
+	-- ===== ТАРГЕТ (не теряет цель) =====
 	if not isActive or not Target then return end
-	if not Alive(Target) then
+
+	-- Игрок вышел с сервера
+	if not Target.Parent then
+		Target = nil
 		StopTarget()
-		if StatusLabel then StatusLabel.Text = "Статус: цель потеряна" end
+		if StatusLabel then StatusLabel.Text = "Статус: цель вышла" end
 		return
 	end
 
 	local myRoot = Root(LocalPlayer)
 	local tRoot  = Root(Target)
-	if not myRoot or not tRoot then return end
+
+	-- Временно нет Character (телепорт/стриминг) — просто ждём
+	if not myRoot or not tRoot then
+		return
+	end
+
+	-- Смерть цели (с небольшой задержкой)
+	local tHum = Target.Character and Target.Character:FindFirstChildOfClass("Humanoid")
+	if tHum and tHum.Health <= 0 then
+		task.delay(0.5, function()
+			if Target and Target.Character then
+				local h = Target.Character:FindFirstChildOfClass("Humanoid")
+				if h and h.Health <= 0 then
+					Target = nil
+					StopTarget()
+					if StatusLabel then StatusLabel.Text = "Статус: цель мертва" end
+				end
+			end
+		end)
+		return
+	end
 
 	-- Смотрим на цель
-	local look = Vector3.new(tRoot.Position.X, myRoot.Position.Y, tRoot.Position.Z)
-	myRoot.CFrame = CFrame.lookAt(myRoot.Position, look)
+	local lookPos = Vector3.new(tRoot.Position.X, myRoot.Position.Y, tRoot.Position.Z)
+	myRoot.CFrame = CFrame.lookAt(myRoot.Position, lookPos)
 
-	-- Кружение
-	circleAngle += S.CircleSpeed * dt * 3.5
-	local desired = tRoot.Position + Vector3.new(
-		math.cos(circleAngle) * S.CircleRadius,
-		S.CircleHeight,
-		math.sin(circleAngle) * S.CircleRadius
-	)
+	-- Позиция ЗА СПИНОЙ
+	local behindDir = -tRoot.CFrame.LookVector
+	local jitter = math.sin(tick() * S.JitterSpeed) * S.JitterAmount
+	local right = tRoot.CFrame.RightVector
+
+	local desired = tRoot.Position
+		+ behindDir * S.BehindDistance
+		+ right * jitter
+		+ Vector3.new(0, S.BehindHeight, 0)
 
 	local delta = desired - myRoot.Position
 	local dist  = delta.Magnitude
-	if dist > 0.6 then
-		myRoot.AssemblyLinearVelocity = delta.Unit * math.min(S.FlySpeed, dist * 8)
+
+	if dist > 0.35 then
+		local speed = math.min(S.BehindSpeed, dist * 12)
+		myRoot.AssemblyLinearVelocity = delta.Unit * speed
 	else
 		myRoot.AssemblyLinearVelocity = Vector3.zero
 	end
 
+	-- Атака
 	if (tRoot.Position - myRoot.Position).Magnitude <= S.AttackRange then
 		Attack()
 	end
@@ -349,63 +393,64 @@ Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 Gui.Parent = PlayerGui
 
 local Main = Instance.new("Frame")
-Main.Size = UDim2.fromOffset(270, 390)
-Main.Position = UDim2.new(0.5, -135, 0.5, -195)
-Main.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
+Main.Size = UDim2.fromOffset(255, 370)
+Main.Position = UDim2.new(0.5, -127, 0.5, -185)
+Main.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.Parent = Gui
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
 
-Instance.new("UIStroke", Main).Color = Color3.fromRGB(60, 75, 110)
-Main:FindFirstChildOfClass("UIStroke").Transparency = 0.4
+local stroke = Instance.new("UIStroke", Main)
+stroke.Color = Color3.fromRGB(55, 70, 105)
+stroke.Transparency = 0.4
 
 local Header = Instance.new("Frame")
-Header.Size = UDim2.new(1, 0, 0, 34)
-Header.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
+Header.Size = UDim2.new(1, 0, 0, 32)
+Header.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
 Header.BorderSizePixel = 0
 Header.Active = true
 Header.Parent = Main
 Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 10)
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -75, 1, 0)
-Title.Position = UDim2.fromOffset(10, 0)
+Title.Size = UDim2.new(1, -70, 1, 0)
+Title.Position = UDim2.fromOffset(9, 0)
 Title.BackgroundTransparency = 1
 Title.Text = "Задрочка типов"
 Title.TextColor3 = Color3.fromRGB(245, 247, 250)
 Title.Font = Enum.Font.GothamBold
-Title.TextSize = 13
+Title.TextSize = 12
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
 
 local MinBtn = Instance.new("TextButton")
-MinBtn.Size = UDim2.fromOffset(26, 24)
-MinBtn.Position = UDim2.new(1, -58, 0, 5)
-MinBtn.BackgroundColor3 = Color3.fromRGB(45, 50, 65)
+MinBtn.Size = UDim2.fromOffset(24, 22)
+MinBtn.Position = UDim2.new(1, -54, 0, 5)
+MinBtn.BackgroundColor3 = Color3.fromRGB(42, 46, 60)
 MinBtn.Text = "−"
 MinBtn.TextColor3 = Color3.new(1, 1, 1)
 MinBtn.Font = Enum.Font.GothamBold
-MinBtn.TextSize = 15
+MinBtn.TextSize = 14
 MinBtn.BorderSizePixel = 0
 MinBtn.Parent = Header
 Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 5)
 
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.fromOffset(26, 24)
-CloseBtn.Position = UDim2.new(1, -28, 0, 5)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(135, 45, 50)
+CloseBtn.Size = UDim2.fromOffset(24, 22)
+CloseBtn.Position = UDim2.new(1, -26, 0, 5)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(130, 42, 48)
 CloseBtn.Text = "×"
 CloseBtn.TextColor3 = Color3.new(1, 1, 1)
 CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextSize = 15
+CloseBtn.TextSize = 14
 CloseBtn.BorderSizePixel = 0
 CloseBtn.Parent = Header
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 5)
 
 local Tabs = Instance.new("Frame")
-Tabs.Size = UDim2.new(1, -10, 0, 28)
-Tabs.Position = UDim2.fromOffset(5, 38)
+Tabs.Size = UDim2.new(1, -8, 0, 26)
+Tabs.Position = UDim2.fromOffset(4, 36)
 Tabs.BackgroundTransparency = 1
 Tabs.Parent = Main
 
@@ -415,14 +460,14 @@ tabLay.Padding = UDim.new(0, 4)
 tabLay.Parent = Tabs
 
 local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -10, 1, -135)
-Content.Position = UDim2.fromOffset(5, 70)
+Content.Size = UDim2.new(1, -8, 1, -125)
+Content.Position = UDim2.fromOffset(4, 66)
 Content.BackgroundTransparency = 1
 Content.Parent = Main
 
 local Bottom = Instance.new("Frame")
-Bottom.Size = UDim2.new(1, -10, 0, 95)
-Bottom.Position = UDim2.new(0, 5, 1, -100)
+Bottom.Size = UDim2.new(1, -8, 0, 88)
+Bottom.Position = UDim2.new(0, 4, 1, -92)
 Bottom.BackgroundTransparency = 1
 Bottom.Parent = Main
 
@@ -435,13 +480,14 @@ end
 
 local function btn(parent, text, h)
 	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(1, 0, 0, h or 30)
-	b.BackgroundColor3 = Color3.fromRGB(40, 44, 58)
+	b.Size = UDim2.new(1, 0, 0, h or 28)
+	b.BackgroundColor3 = Color3.fromRGB(38, 42, 55)
 	b.TextColor3 = Color3.fromRGB(235, 238, 245)
 	b.Text = text
 	b.Font = Enum.Font.GothamMedium
-	b.TextSize = 12
+	b.TextSize = 11
 	b.BorderSizePixel = 0
+	b.TextTruncate = Enum.TextTruncate.AtEnd
 	b.Parent = parent
 	corner(b, 6)
 	return b
@@ -449,24 +495,25 @@ end
 
 local function lbl(parent, text, h)
 	local l = Instance.new("TextLabel")
-	l.Size = UDim2.new(1, 0, 0, h or 18)
+	l.Size = UDim2.new(1, 0, 0, h or 16)
 	l.BackgroundTransparency = 1
 	l.Text = text
-	l.TextColor3 = Color3.fromRGB(195, 205, 220)
+	l.TextColor3 = Color3.fromRGB(190, 200, 215)
 	l.Font = Enum.Font.Gotham
-	l.TextSize = 12
+	l.TextSize = 11
 	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextTruncate = Enum.TextTruncate.AtEnd
 	l.Parent = parent
 	return l
 end
 
 local function toggle(parent, text, val, cb)
-	local b = btn(parent, text .. ": " .. (val and "ON" or "OFF"), 30)
-	b.BackgroundColor3 = val and Color3.fromRGB(40, 125, 75) or Color3.fromRGB(40, 44, 58)
+	local b = btn(parent, text .. ": " .. (val and "ON" or "OFF"), 28)
+	b.BackgroundColor3 = val and Color3.fromRGB(38, 120, 70) or Color3.fromRGB(38, 42, 55)
 	b.MouseButton1Click:Connect(function()
 		val = not val
 		b.Text = text .. ": " .. (val and "ON" or "OFF")
-		b.BackgroundColor3 = val and Color3.fromRGB(40, 125, 75) or Color3.fromRGB(40, 44, 58)
+		b.BackgroundColor3 = val and Color3.fromRGB(38, 120, 70) or Color3.fromRGB(38, 42, 55)
 		cb(val)
 	end)
 	return b
@@ -474,31 +521,32 @@ end
 
 local function slider(parent, text, key, minV, maxV, step)
 	local hold = Instance.new("Frame")
-	hold.Size = UDim2.new(1, 0, 0, 44)
+	hold.Size = UDim2.new(1, 0, 0, 40)
 	hold.BackgroundTransparency = 1
 	hold.Parent = parent
 
-	local name = lbl(hold, text, 15)
-	name.Size = UDim2.new(1, -45, 0, 15)
+	local name = lbl(hold, text, 14)
+	name.Size = UDim2.new(1, -42, 0, 14)
 
-	local valT = lbl(hold, tostring(S[key]), 15)
-	valT.Size = UDim2.fromOffset(42, 15)
-	valT.Position = UDim2.new(1, -42, 0, 0)
+	local valT = lbl(hold, tostring(S[key]), 14)
+	valT.Size = UDim2.fromOffset(40, 14)
+	valT.Position = UDim2.new(1, -40, 0, 0)
 	valT.TextXAlignment = Enum.TextXAlignment.Right
-	valT.TextColor3 = Color3.fromRGB(110, 170, 255)
+	valT.TextColor3 = Color3.fromRGB(100, 165, 255)
 	valT.Font = Enum.Font.GothamBold
+	valT.TextSize = 11
 
 	local bar = Instance.new("Frame")
 	bar.Size = UDim2.new(1, 0, 0, 6)
-	bar.Position = UDim2.fromOffset(0, 24)
-	bar.BackgroundColor3 = Color3.fromRGB(45, 50, 65)
+	bar.Position = UDim2.fromOffset(0, 22)
+	bar.BackgroundColor3 = Color3.fromRGB(42, 48, 62)
 	bar.BorderSizePixel = 0
 	bar.Active = true
 	bar.Parent = hold
 	corner(bar, 3)
 
 	local fill = Instance.new("Frame")
-	fill.BackgroundColor3 = Color3.fromRGB(85, 145, 230)
+	fill.BackgroundColor3 = Color3.fromRGB(80, 140, 225)
 	fill.BorderSizePixel = 0
 	fill.Parent = bar
 	corner(fill, 3)
@@ -540,7 +588,7 @@ local function slider(parent, text, key, minV, maxV, step)
 	return hold
 end
 
--- Drag за любую часть
+-- Drag
 do
 	local dragging, start, pos = false, nil, nil
 	local function begin(i)
@@ -578,9 +626,14 @@ local function newPage(name)
 	p.ScrollBarThickness = 3
 	p.CanvasSize = UDim2.new()
 	p.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	p.ScrollingDirection = Enum.ScrollingDirection.Y
 	p.Visible = false
 	p.Parent = Content
-	Instance.new("UIPadding", p).PaddingBottom = UDim.new(0, 6)
+
+	local pad = Instance.new("UIPadding", p)
+	pad.PaddingTop = UDim.new(0, 2)
+	pad.PaddingBottom = UDim.new(0, 20)
+
 	local lay = Instance.new("UIListLayout", p)
 	lay.Padding = UDim.new(0, 5)
 	lay.SortOrder = Enum.SortOrder.LayoutOrder
@@ -589,8 +642,8 @@ local function newPage(name)
 end
 
 local function newTab(name)
-	local b = btn(Tabs, name, 28)
-	b.Size = UDim2.new(0.5, -3, 0, 28)
+	local b = btn(Tabs, name, 26)
+	b.Size = UDim2.new(0.5, -3, 0, 26)
 	TabBtns[name] = b
 	return b
 end
@@ -598,7 +651,7 @@ end
 local function show(name)
 	for n, p in pairs(Pages) do p.Visible = (n == name) end
 	for n, b in pairs(TabBtns) do
-		b.BackgroundColor3 = (n == name) and Color3.fromRGB(50, 70, 110) or Color3.fromRGB(40, 44, 58)
+		b.BackgroundColor3 = (n == name) and Color3.fromRGB(48, 65, 105) or Color3.fromRGB(38, 42, 55)
 	end
 end
 
@@ -608,56 +661,80 @@ end
 local pageT = newPage("Таргет")
 newTab("Таргет")
 
-lbl(pageT, "Настройки таргета", 16)
-slider(pageT, "Скорость полёта", "FlySpeed", 20, 150, 5)
-slider(pageT, "Радиус кружения", "CircleRadius", 2, 30, 1)
-slider(pageT, "Высота", "CircleHeight", -10, 25, 1)
-slider(pageT, "Скорость кружения", "CircleSpeed", 0.1, 3, 0.05)
-slider(pageT, "Радиус атаки", "AttackRange", 2, 20, 1)
-slider(pageT, "Задержка атаки", "AttackCooldown", 0.3, 3, 0.1)
-slider(pageT, "Слот оружия", "WeaponSlot", 1, 10, 1)
-toggle(pageT, "Автооружие", S.AutoWeapon, function(v) S.AutoWeapon = v end)
+local settingsBtn = btn(pageT, "▼  Настройки таргета", 28)
+settingsBtn.BackgroundColor3 = Color3.fromRGB(45, 55, 75)
 
-lbl(pageT, "Выбор цели", 16)
+local settingsFrame = Instance.new("Frame")
+settingsFrame.Size = UDim2.new(1, 0, 0, 0)
+settingsFrame.BackgroundTransparency = 1
+settingsFrame.ClipsDescendants = true
+settingsFrame.Visible = false
+settingsFrame.Parent = pageT
+
+local sLay = Instance.new("UIListLayout", settingsFrame)
+sLay.Padding = UDim.new(0, 4)
+
+slider(settingsFrame, "Скорость за спиной", "BehindSpeed", 20, 160, 5)
+slider(settingsFrame, "Дистанция за спиной", "BehindDistance", 1, 12, 0.5)
+slider(settingsFrame, "Высота", "BehindHeight", -5, 15, 0.5)
+slider(settingsFrame, "Сила дрожания", "JitterAmount", 0, 4, 0.1)
+slider(settingsFrame, "Скорость дрожания", "JitterSpeed", 1, 20, 1)
+slider(settingsFrame, "Дальность удара", "AttackRange", 2, 20, 0.5)
+slider(settingsFrame, "Задержка атаки", "AttackCooldown", 0.2, 2.5, 0.05)
+slider(settingsFrame, "Слот оружия", "WeaponSlot", 1, 10, 1)
+toggle(settingsFrame, "Автооружие", S.AutoWeapon, function(v) S.AutoWeapon = v end)
+
+settingsBtn.MouseButton1Click:Connect(function()
+	settingsOpen = not settingsOpen
+	settingsFrame.Visible = settingsOpen
+	if settingsOpen then
+		settingsBtn.Text = "▲  Настройки таргета"
+		settingsFrame.Size = UDim2.new(1, 0, 0, 320)
+	else
+		settingsBtn.Text = "▼  Настройки таргета"
+		settingsFrame.Size = UDim2.new(1, 0, 0, 0)
+	end
+end)
+
+lbl(pageT, "Выбор цели", 15)
 
 local Search = Instance.new("TextBox")
-Search.Size = UDim2.new(1, 0, 0, 28)
-Search.BackgroundColor3 = Color3.fromRGB(28, 32, 44)
+Search.Size = UDim2.new(1, 0, 0, 26)
+Search.BackgroundColor3 = Color3.fromRGB(26, 30, 40)
 Search.TextColor3 = Color3.new(1, 1, 1)
-Search.PlaceholderColor3 = Color3.fromRGB(120, 130, 145)
+Search.PlaceholderColor3 = Color3.fromRGB(115, 125, 140)
 Search.PlaceholderText = "Поиск..."
 Search.Text = ""
 Search.Font = Enum.Font.Gotham
-Search.TextSize = 12
+Search.TextSize = 11
 Search.TextXAlignment = Enum.TextXAlignment.Left
 Search.BorderSizePixel = 0
 Search.Parent = pageT
-corner(Search, 6)
-Instance.new("UIPadding", Search).PaddingLeft = UDim.new(0, 8)
+corner(Search, 5)
+Instance.new("UIPadding", Search).PaddingLeft = UDim.new(0, 7)
 
-local TargetInfo = lbl(pageT, "Цель: не выбрана", 16)
-TargetInfo.TextColor3 = Color3.fromRGB(120, 180, 255)
+local TargetInfo = lbl(pageT, "Цель: не выбрана", 15)
+TargetInfo.TextColor3 = Color3.fromRGB(110, 175, 255)
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, 0, 0, 95)
-PlayerList.BackgroundColor3 = Color3.fromRGB(22, 25, 33)
+PlayerList.Size = UDim2.new(1, 0, 0, 85)
+PlayerList.BackgroundColor3 = Color3.fromRGB(20, 23, 30)
 PlayerList.BorderSizePixel = 0
 PlayerList.ScrollBarThickness = 3
 PlayerList.CanvasSize = UDim2.new()
 PlayerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
 PlayerList.Parent = pageT
-corner(PlayerList, 6)
+corner(PlayerList, 5)
 
 local lp = Instance.new("UIPadding", PlayerList)
 lp.PaddingTop = UDim.new(0, 3)
 lp.PaddingBottom = UDim.new(0, 3)
 lp.PaddingLeft = UDim.new(0, 3)
 lp.PaddingRight = UDim.new(0, 3)
-
 Instance.new("UIListLayout", PlayerList).Padding = UDim.new(0, 3)
 
 local function updInfo()
-	if Target and Alive(Target) then
+	if Target and Target.Parent then
 		local r, my = Root(Target), Root(LocalPlayer)
 		local d = (r and my) and math.floor((r.Position - my.Position).Magnitude) or 0
 		TargetInfo.Text = string.format("Цель: %s  •  %dm", Target.DisplayName, d)
@@ -680,11 +757,11 @@ local function refreshList()
 	for _, p in ipairs(list) do
 		if q == "" or p.DisplayName:lower():find(q, 1, true) or p.Name:lower():find(q, 1, true) then
 			local alive = Alive(p)
-			local b = btn(PlayerList, (alive and "● " or "○ ") .. p.DisplayName, 28)
-			b.BackgroundColor3 = (p == Target) and Color3.fromRGB(50, 80, 125) or (alive and Color3.fromRGB(34, 40, 52) or Color3.fromRGB(45, 38, 40))
-			b.TextColor3 = alive and Color3.fromRGB(235, 238, 245) or Color3.fromRGB(130, 135, 145)
+			local b = btn(PlayerList, (alive and "● " or "○ ") .. p.DisplayName, 26)
+			b.BackgroundColor3 = (p == Target) and Color3.fromRGB(48, 75, 120) or (alive and Color3.fromRGB(32, 38, 50) or Color3.fromRGB(42, 35, 38))
+			b.TextColor3 = alive and Color3.fromRGB(235, 238, 245) or Color3.fromRGB(125, 130, 140)
 			b.MouseButton1Click:Connect(function()
-				Target = alive and p or nil
+				Target = p
 				updInfo()
 				refreshList()
 			end)
@@ -695,12 +772,12 @@ end
 
 Search:GetPropertyChangedSignal("Text"):Connect(refreshList)
 
-btn(pageT, "Выбрать ближайшую", 30).MouseButton1Click:Connect(function()
+btn(pageT, "Выбрать ближайшую", 28).MouseButton1Click:Connect(function()
 	local n = Nearest()
 	if n then Target = n refreshList() end
 end)
 
-btn(pageT, "⚔ Атаковать ближайшего", 32).MouseButton1Click:Connect(function()
+btn(pageT, "⚔ Атаковать ближайшего", 30).MouseButton1Click:Connect(function()
 	local n = Nearest()
 	if n then
 		Target = n
@@ -714,17 +791,17 @@ end)
 --------------------------------------------------
 -- Нижние кнопки
 --------------------------------------------------
-local startB = btn(Bottom, "▶  ЗАПУСТИТЬ", 34)
-startB.BackgroundColor3 = Color3.fromRGB(40, 125, 75)
+local startB = btn(Bottom, "▶  ЗАПУСТИТЬ", 32)
+startB.BackgroundColor3 = Color3.fromRGB(38, 120, 70)
 startB.Position = UDim2.fromOffset(0, 0)
 
-local stopB = btn(Bottom, "■  ОСТАНОВИТЬ", 30)
-stopB.BackgroundColor3 = Color3.fromRGB(125, 45, 50)
-stopB.Position = UDim2.fromOffset(0, 38)
+local stopB = btn(Bottom, "■  ОСТАНОВИТЬ", 28)
+stopB.BackgroundColor3 = Color3.fromRGB(120, 42, 48)
+stopB.Position = UDim2.fromOffset(0, 36)
 
-StatusLabel = lbl(Bottom, "Статус: остановлен", 16)
-StatusLabel.Position = UDim2.fromOffset(0, 74)
-StatusLabel.TextColor3 = Color3.fromRGB(150, 160, 175)
+StatusLabel = lbl(Bottom, "Статус: остановлен", 15)
+StatusLabel.Position = UDim2.fromOffset(0, 70)
+StatusLabel.TextColor3 = Color3.fromRGB(145, 155, 170)
 
 startB.MouseButton1Click:Connect(StartTarget)
 stopB.MouseButton1Click:Connect(StopTarget)
@@ -735,7 +812,7 @@ stopB.MouseButton1Click:Connect(StopTarget)
 local pageE = newPage("Доп.")
 newTab("Доп.")
 
-lbl(pageE, "Движение", 16)
+lbl(pageE, "Движение", 15)
 toggle(pageE, "Noclip", S.Noclip, function(v)
 	S.Noclip = v
 	if not v then RestoreNoclip() end
@@ -747,7 +824,7 @@ toggle(pageE, "Speedhack", S.SpeedHack, function(v)
 end)
 slider(pageE, "Скорость Speedhack", "SpeedValue", 16, 150, 1)
 
-lbl(pageE, "ESP", 16)
+lbl(pageE, "ESP", 15)
 toggle(pageE, "ESP Вкл", S.ESP, function(v)
 	S.ESP = v
 	if v then RefreshESP() else ClearESP() end
@@ -774,11 +851,11 @@ MinBtn.MouseButton1Click:Connect(function()
 		Tabs.Visible = false
 		Content.Visible = false
 		Bottom.Visible = false
-		TweenService:Create(Main, TweenInfo.new(0.14), {Size = UDim2.fromOffset(145, 34)}):Play()
+		TweenService:Create(Main, TweenInfo.new(0.13), {Size = UDim2.fromOffset(140, 32)}):Play()
 		MinBtn.Text = "+"
 	else
-		TweenService:Create(Main, TweenInfo.new(0.14), {Size = UDim2.fromOffset(270, 390)}):Play()
-		task.delay(0.12, function()
+		TweenService:Create(Main, TweenInfo.new(0.13), {Size = UDim2.fromOffset(255, 370)}):Play()
+		task.delay(0.11, function()
 			if not isMinimized then
 				Tabs.Visible = true
 				Content.Visible = true
@@ -810,15 +887,26 @@ refreshList()
 Players.PlayerAdded:Connect(function(p)
 	task.defer(refreshList)
 	p.CharacterAdded:Connect(function()
-		task.wait(0.4)
+		task.wait(0.35)
 		task.defer(refreshList)
-		if S.ESP then CreateESP(p) end
+		if S.ESP then
+			if espData[p] then
+				local d = espData[p]
+				if d.hl then d.hl:Destroy() end
+				if d.bb then d.bb:Destroy() end
+				espData[p] = nil
+			end
+			CreateESP(p)
+		end
 	end)
 	if S.ESP then CreateESP(p) end
 end)
 
 Players.PlayerRemoving:Connect(function(p)
-	if p == Target then Target = nil StopTarget() end
+	if p == Target then
+		Target = nil
+		StopTarget()
+	end
 	if espData[p] then
 		local d = espData[p]
 		if d.hl then d.hl:Destroy() end
@@ -828,16 +916,21 @@ Players.PlayerRemoving:Connect(function(p)
 	task.defer(refreshList)
 end)
 
+-- При своём телепорте/респавне
 LocalPlayer.CharacterAdded:Connect(function()
-	StopTarget()
-	Target = nil
+	RemovePaused()
+	task.delay(0.25, RemovePaused)
+	task.delay(0.6, RemovePaused)
+
 	RestoreNoclip()
 	task.defer(refreshList)
 	if S.ESP then task.defer(RefreshESP) end
-	if StatusLabel then StatusLabel.Text = "Статус: респавн" end
+
+	if StatusLabel and not isActive then
+		StatusLabel.Text = "Статус: респавн"
+	end
 end)
 
--- Обновление инфо о цели
 RunService.Heartbeat:Connect(updInfo)
 
-print("[Задрочка типов] v5.0 загружена")
+print("[Задрочка типов] v5.2 загружена")
