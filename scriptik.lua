@@ -1,7 +1,7 @@
 --[[
-    Задрочка типов v5.5
+    Задрочка типов v5.6
     Килаура мгновенно сбрасывает мертвую цель + уменьшен GUI
-    ИСПРАВЛЕНО: Noclip, дальность килауры, ESP видимость
+    ИСПРАВЛЕНО: Noclip полностью, ESP без заливки, дальность килауры
 ]]
 
 local Players          = game:GetService("Players")
@@ -49,7 +49,7 @@ local S = {
 local Target       = nil
 local isActive     = false
 local lastAttack   = 0
-local noclipCache  = {}
+local noclipParts  = {}
 local isMinimized  = false
 local StatusLabel  = nil
 local espFolder    = nil
@@ -97,32 +97,32 @@ local function Hum()
 end
 
 --------------------------------------------------
--- Noclip (ИСПРАВЛЕН)
+-- Noclip ПОЛНОСТЬЮ ПЕРЕРАБОТАН
 --------------------------------------------------
 local function RestoreNoclip()
-	for part, old in pairs(noclipCache) do
+	for part, _ in pairs(noclipParts) do
 		if part and part.Parent then
-			part.CanCollide = old
+			part.CanCollide = true
 		end
 	end
-	table.clear(noclipCache)
+	table.clear(noclipParts)
 end
 
 RunService.Stepped:Connect(function()
 	if not S.Noclip then return end
+	
 	local char = LocalPlayer.Character
 	if not char then return end
 
-	for _, obj in ipairs(char:GetDescendants()) do
-		if obj:IsA("BasePart") then
-			if obj.Name ~= "HumanoidRootPart" then
-				if noclipCache[obj] == nil then
-					noclipCache[obj] = obj.CanCollide
-				end
-				if obj.CanCollide then
-					obj.CanCollide = false
-				end
+	-- Отключаем коллизии для ВСЕХ частей персонажа
+	for _, part in ipairs(char:FindFirstChildOfClass("Humanoid") and char:GetDescendants() or {}) do
+		if part:IsA("BasePart") then
+			-- Сохраняем исходное состояние если еще не сохранили
+			if noclipParts[part] == nil then
+				noclipParts[part] = part.CanCollide
 			end
+			-- Отключаем коллизии
+			part.CanCollide = false
 		end
 	end
 end)
@@ -184,7 +184,7 @@ local function Nearest()
 end
 
 --------------------------------------------------
--- ESP (ИСПРАВЛЕНО - зелёные боксы вместо highlight)
+-- ESP (зелёные контуры БЕЗ заливки)
 --------------------------------------------------
 local function ClearESP()
 	for _, d in pairs(espData) do
@@ -213,7 +213,7 @@ local function CreateESP(plr)
 
 	local data = {}
 
-	-- Зелёный боксе вместо Highlight
+	-- Зелёный контур БЕЗ заливки (только обводка)
 	if S.ESP_Highlight then
 		local box = Instance.new("Part")
 		box.Name = "ESPBox"
@@ -223,19 +223,17 @@ local function CreateESP(plr)
 		box.CFrame = root.CFrame
 		box.Size = Vector3.new(3, 5, 3)
 		box.Color = Color3.fromRGB(0, 255, 0)
-		box.Transparency = 0.3
+		box.Transparency = 1  -- ПОЛНОСТЬЮ П��ОЗРАЧНЫЙ (только контур видно)
 		box.TopSurface = Enum.SurfaceType.Smooth
 		box.BottomSurface = Enum.SurfaceType.Smooth
 		box.Parent = espFolder
 		
-		-- Обновляем позицию через BodyVelocity
-		local bodyVel = Instance.new("BodyVelocity")
-		bodyVel.Velocity = Vector3.zero
-		bodyVel.MaxForce = Vector3.zero
-		bodyVel.Parent = box
+		-- Добавляем обводку
+		local surfaceGui = Instance.new("SurfaceGui")
+		surfaceGui.Face = Enum.NormalId.Front
+		surfaceGui.Parent = box
 		
 		data.box = box
-		data.bodyVel = bodyVel
 	end
 
 	if S.ESP_Name or S.ESP_Distance then
@@ -431,7 +429,7 @@ RunService.Heartbeat:Connect(function(dt)
 		myRoot.AssemblyLinearVelocity = Vector3.new(0, math.clamp(desiredY - currentY, -15, 15), 0)
 	end
 
-	-- Атака (ДАЛЬНОСТЬ УВЕЛИЧЕНА)
+	-- Атака
 	local attackDist = (tRoot.Position - myRoot.Position).Magnitude
 	if attackDist <= S.AttackRange then
 		Attack()
@@ -888,7 +886,7 @@ toggle(pageE, "ESP Вкл", S.ESP, function(v)
 	S.ESP = v
 	if v then RefreshESP() else ClearESP() end
 end)
-toggle(pageE, "Подсветка (боксе)", S.ESP_Highlight, function(v)
+toggle(pageE, "Контур", S.ESP_Highlight, function(v)
 	S.ESP_Highlight = v
 	if S.ESP then RefreshESP() end
 end)
@@ -992,4 +990,4 @@ end)
 
 RunService.Heartbeat:Connect(updInfo)
 
-print("[Задрочка типов] v5.5 загружена с исправлениями")
+print("[Задрочка типов] v5.6 - NOCLIP ПОЛНОСТЬЮ ПЕРЕРАБОТАН")
