@@ -1,8 +1,13 @@
 --[[
-  Скрипт для "Создай ИИ" (Create AI)
-  Версия: 3.1 - ИСПРАВЛЕННАЯ
-]]
+    Скрипт для "Создай ИИ" (Create AI)
+    Версия: 3.2 - ИСПРАВЛЕННАЯ
+    Основан на предоставленном scriptik.lua.
 
+    ВАЖНО:
+    - Для обычного Roblox Studio запускай этот код как LocalScript.
+    - Для GUI используется PlayerGui, когда он доступен.
+    - Для загрузки с URL требуется среда, в которой разрешены HttpGet/loadstring.
+]]
 -- Настройки
 local Settings = {
     FlySpeed = 50,
@@ -31,9 +36,18 @@ local AntiAim = {
     jitterAngle = 0,
     spinAngle = 0,
     lastUpdate = 0,
+    randomLastUpdate = 0,
     isRetreating = false,
     retreatTimer = 0
 }
+
+-- Предварительные объявления функций
+local SwitchTab
+local CreateMainTabContent
+local CreateCombatTabContent
+local CreateMovementTabContent
+local StartScript
+local StopScript
 
 -- Основные переменные
 local Target = nil
@@ -43,6 +57,7 @@ local circleAngle = 0
 local isMinimized = false
 local currentTab = "Main"
 local lastAttackTime = 0
+local noclipParts = {}
 
 -- Создаём GUI
 local ScreenGui = Instance.new("ScreenGui")
@@ -133,7 +148,7 @@ local CombatTab = CreateTab("Бой", "⚔", 112)
 local MovementTab = CreateTab("Movement", "🏃", 224)
 
 -- Функция переключения вкладок
-local function SwitchTab(tabName)
+SwitchTab = function(tabName)
     currentTab = tabName
     
     -- Обновляем цвета кнопок
@@ -165,7 +180,7 @@ local function SwitchTab(tabName)
 end
 
 -- Функция создания главной вкладки
-local function CreateMainTabContent()
+CreateMainTabContent = function()
     local yOffset = 10
     
     -- Выбор игрока
@@ -248,7 +263,9 @@ local function CreateMainTabContent()
                     Target = player
                     DropdownButton.Text = "Цель: " .. player.Name
                     DropdownList.Visible = false
-                    StatusLabel.Text = "Статус: Цель выбрана - " .. player.Name
+                    if _G.StatusLabel then
+                        _G.StatusLabel.Text = "Статус: Цель выбрана - " .. player.Name
+                    end
                 end)
                 
                 yOffset = yOffset + 25
@@ -314,7 +331,7 @@ local function CreateMainTabContent()
 end
 
 -- Функция создания вкладки боя
-local function CreateCombatTabContent()
+CreateCombatTabContent = function()
     local yOffset = 10
     
     -- Заголовок
@@ -573,7 +590,7 @@ local function CreateCombatTabContent()
     TypeDropdown.Parent = ContentContainer
     
     local types = {"Jitter", "Random", "Spin"}
-    local typeIndex = 1
+    local typeIndex = table.find(types, Settings.AntiAim.Type) or 1
     
     TypeDropdown.MouseButton1Click:Connect(function()
         typeIndex = typeIndex % #types + 1
@@ -650,7 +667,7 @@ local function CreateCombatTabContent()
 end
 
 -- Функция создания вкладки Movement
-local function CreateMovementTabContent()
+CreateMovementTabContent = function()
     local yOffset = 10
     
     -- Заголовок
@@ -842,8 +859,11 @@ local function Attack(targetChar)
     EquipWeapon()
     
     -- Атака
-    local success = pcall(function()
-        local tool = game:GetService("Players").LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    local success, err = pcall(function()
+        local player = game:GetService("Players").LocalPlayer
+        local character = player and player.Character
+        local tool = character and character:FindFirstChildOfClass("Tool")
+
         if tool then
             tool:Activate()
             lastAttackTime = currentTime
@@ -851,6 +871,10 @@ local function Attack(targetChar)
             AntiAim.retreatTimer = currentTime + 0.5
         end
     end)
+
+    if not success then
+        warn("[AI Target] Ошибка атаки:", err)
+    end
 end
 
 local function ApplyAntiAim()
@@ -873,7 +897,8 @@ local function ApplyAntiAim()
         humanoidRootPart.CFrame = humanoidRootPart.CFrame * CFrame.Angles(0, math.rad(jitterOffset), 0)
         
     elseif Settings.AntiAim.Type == "Random" then
-        if currentTime - AntiAim.lastUpdate > 0.1 then
+        if currentTime - AntiAim.randomLastUpdate > 0.1 then
+            AntiAim.randomLastUpdate = currentTime
             local randomAngle = math.random(-Settings.AntiAim.Range, Settings.AntiAim.Range)
             humanoidRootPart.CFrame = humanoidRootPart.CFrame * CFrame.Angles(0, math.rad(randomAngle), 0)
         end
@@ -905,7 +930,7 @@ local function MoveToTarget()
     -- Проверяем отлёт
     if AntiAim.isRetreating and currentTime < AntiAim.retreatTimer then
         local retreatDirection = (localRoot.Position - targetPos).Unit
-        localRoot.Velocity = retreatDirection * Settings.RetreatSpeed
+        localRoot.AssemblyLinearVelocity = retreatDirection * Settings.RetreatSpeed
         ApplyAntiAim()
         return
     else
@@ -913,9 +938,9 @@ local function MoveToTarget()
     end
     
     -- Кружение
-    circleAngle = circleAngle + Settings.CircleSpeed
-    if circleAngle > 360 then
-        circleAngle = circleAngle - 360
+    circleAngle = circleAngle + math.rad(Settings.CircleSpeed)
+    if circleAngle > math.pi * 2 then
+        circleAngle = circleAngle - math.pi * 2
     end
     
     local circlePos = Vector3.new(
@@ -928,9 +953,9 @@ local function MoveToTarget()
     local distance = (circlePos - localRoot.Position).Magnitude
     
     if distance > 1 then
-        localRoot.Velocity = direction * Settings.FlySpeed
+        localRoot.AssemblyLinearVelocity = direction * Settings.FlySpeed
     else
-        localRoot.Velocity = Vector3.new(0, 0, 0)
+        localRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
     end
     
     -- Атака
@@ -940,8 +965,11 @@ local function MoveToTarget()
     
     -- Noclip
     if Settings.Noclip then
-        for _, part in ipairs(localChar:GetChildren()) do
+        for _, part in ipairs(localChar:GetDescendants()) do
             if part:IsA("BasePart") then
+                if noclipParts[part] == nil then
+                    noclipParts[part] = part.CanCollide
+                end
                 part.CanCollide = false
             end
         end
@@ -951,7 +979,7 @@ local function MoveToTarget()
     ApplyAntiAim()
 end
 
-local function StartScript()
+StartScript = function()
     if not Target and not Settings.AutoTarget then
         if _G.StatusLabel then
             _G.StatusLabel.Text = "Статус: Выбери цель!"
@@ -976,6 +1004,11 @@ local function StartScript()
         return false
     end
     
+    if connection then
+        connection:Disconnect()
+        connection = nil
+    end
+
     isActive = true
     if _G.StatusLabel then
         _G.StatusLabel.Text = "Статус: Активен - " .. Target.Name
@@ -986,7 +1019,7 @@ local function StartScript()
     return true
 end
 
-local function StopScript()
+StopScript = function()
     isActive = false
     if connection then
         connection:Disconnect()
@@ -998,7 +1031,7 @@ local function StopScript()
     if localChar then
         local localRoot = localChar:FindFirstChild("HumanoidRootPart")
         if localRoot then
-            localRoot.Velocity = Vector3.new(0, 0, 0)
+            localRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
         end
     end
     
@@ -1016,11 +1049,34 @@ MinimizeButton.MouseButton1Click:Connect(function()
     ContentContainer.Visible = not isMinimized
 end)
 
+-- Очистка состояния при респавне
+if LocalPlayer then
+    LocalPlayer.CharacterAdded:Connect(function()
+        if isActive then
+            StopScript()
+        end
+        Target = nil
+        circleAngle = 0
+        AntiAim.isRetreating = false
+        AntiAim.retreatTimer = 0
+        AntiAim.lastUpdate = 0
+        AntiAim.randomLastUpdate = 0
+    end)
+end
+
 -- Показываем главную вкладку
 SwitchTab("Главная")
 
 -- Добавляем GUI на экран
-ScreenGui.Parent = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+
+if PlayerGui then
+    ScreenGui.Parent = PlayerGui
+else
+    ScreenGui.Parent = game:GetService("CoreGui")
+end
 
 print("✅ AI Target System v3.1 загружен!")
 print("💡 Выбери игрока из списка и нажми 'Запустить'")
