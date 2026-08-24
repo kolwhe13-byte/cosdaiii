@@ -100,32 +100,40 @@ end
 -- Noclip ПОЛНОСТЬЮ ПЕРЕРАБОТАН
 --------------------------------------------------
 local function RestoreNoclip()
-	for part, _ in pairs(noclipParts) do
-		if part and part.Parent then
-			part.CanCollide = true
-		end
-	end
-	table.clear(noclipParts)
+    for part, oldValue in pairs(NoclipOriginal) do
+        if part and part.Parent then
+            part.CanCollide = oldValue
+        end
+    end
+    table.clear(NoclipOriginal)
 end
 
-RunService.Stepped:Connect(function()
-	if not S.Noclip then return end
-	
-	local char = LocalPlayer.Character
-	if not char then return end
+local function ApplyNoclip()
+    local character = LocalPlayer.Character
+    if not character then
+        return
+    end
 
-	-- Отключаем коллизии для ВСЕХ частей персонажа
-	for _, part in ipairs(char:FindFirstChildOfClass("Humanoid") and char:GetDescendants() or {}) do
-		if part:IsA("BasePart") then
-			-- Сохраняем исходное состояние если еще не сохранили
-			if noclipParts[part] == nil then
-				noclipParts[part] = part.CanCollide
-			end
-			-- Отключаем коллизии
-			part.CanCollide = false
-		end
-	end
-end)
+    if not Settings.Noclip then
+        RestoreNoclip()
+        return
+    end
+
+    for _, object in ipairs(character:GetDescendants()) do
+        if object:IsA("BasePart") then
+            if NoclipOriginal[object] == nil then
+                NoclipOriginal[object] = object.CanCollide
+            end
+
+            -- HumanoidRootPart оставляем с коллизией (не проваливаемся)
+            if object.Name == "HumanoidRootPart" then
+                object.CanCollide = true
+            else
+                object.CanCollide = false
+            end
+        end
+    end
+end
 
 --------------------------------------------------
 -- Оружие + Атака
