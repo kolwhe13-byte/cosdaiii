@@ -1,6 +1,6 @@
 --[[
     Скрипт для "Создай ИИ" (Create AI)
-    Версия: 5.2 - TARGET UI
+    Версия: 5.2.1 - TARGET UI FIX
     Основан на предоставленном scriptik.lua.
 
     ВАЖНО:
@@ -13,6 +13,10 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    warn("[AI Target] Этот скрипт должен выполняться в клиентском контексте (LocalScript).")
+    return
+end
 
 -- Настройки
 local Settings = {
@@ -247,7 +251,6 @@ TitleBar.Parent = MainFrame
 MakeDraggable(TitleBar, MainFrame)
 Round(TitleBar, 8)
 AddStroke(TitleBar)
-    Round(TitleBar, 8)
 
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -40, 1, 0)
@@ -315,6 +318,247 @@ local CombatTab = CreateTab("Бой", "⚔", 112)
 local MovementTab = CreateTab("Movement", "🏃", 224)
 
 -- Функция переключения вкладок
+-- Функции скрипта
+
+local function GetHumanoid(character)
+    return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+local function GetCharacter(player)
+    return player and player.Character or nil
+end
+
+local function GetTargetRoot(player)
+    local character = GetCharacter(player)
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function IsAlive(player)
+    local character = GetCharacter(player)
+    local humanoid = GetHumanoid(character)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    return player ~= nil and humanoid ~= nil and humanoid.Health > 0 and root ~= nil
+end
+
+local function GetNearestTarget()
+    local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not localRoot then return nil end
+
+    local nearest = nil
+    local nearestDistance = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and IsAlive(player) then
+            local root = GetTargetRoot(player)
+            if root then
+                local distance = (root.Position - localRoot.Position).Magnitude
+                if distance < nearestDistance then
+                    nearest = player
+                    nearestDistance = distance
+                end
+            end
+        end
+    end
+
+    return nearest
+end
+
+local function RestoreNoclip()
+    for part, originalCanCollide in pairs(noclipParts) do
+        if part and part.Parent then
+            part.CanCollide = originalCanCollide
+        end
+    end
+    table.clear(noclipParts)
+end
+
+local function ApplyNoclip()
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    if not Settings.Noclip then
+        RestoreNoclip()
+        return
+    end
+
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            if noclipParts[part] == nil then
+                noclipParts[part] = part.CanCollide
+            end
+            part.CanCollide = false
+        end
+    end
+end
+
+local function EquipWeapon()
+    if not Settings.AutoWeapon then return end
+
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    if character:FindFirstChildOfClass("Tool") then
+        return
+    end
+
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+    local humanoid = GetHumanoid(character)
+    if not backpack or not humanoid then return end
+
+    local tool = backpack:FindFirstChildOfClass("Tool")
+    if tool then
+        humanoid:EquipTool(tool)
+    end
+end
+
+local function Attack(targetCharacter)
+    if not targetCharacter then return end
+
+    local humanoid = GetHumanoid(targetCharacter)
+    if not humanoid or humanoid.Health <= 0 then return end
+
+    local now = os.clock()
+    if now - lastAttackTime < Settings.AttackCooldown then
+        return
+    end
+
+    EquipWeapon()
+
+    local character = LocalPlayer.Character
+    local tool = character and character:FindFirstChildOfClass("Tool")
+    if not tool then return end
+
+    local ok, err = pcall(function()
+        tool:Activate()
+    end)
+
+    if ok then
+        lastAttackTime = now
+    else
+        warn("[AI Target] Ошибка атаки:", err)
+    end
+end
+
+local function GetBestTarget()
+    if Settings.AutoTarget then
+        return GetNearestTarget()
+    end
+
+    if Target and IsAlive(Target) then
+        return Target
+    end
+
+    return nil
+end
+
+local function MoveToTarget()
+    if not isActive then return end
+
+    if Settings.AutoTarget then
+        local nearest = GetNearestTarget()
+        if nearest then Target = nearest end
+    end
+
+    if not Target or not IsAlive(Target) then
+        StopScript()
+        return
+    end
+
+    local character = LocalPlayer.Character
+    local humanoid = GetHumanoid(character)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = GetTargetRoot(Target)
+    if not humanoid or not root or not targetRoot then return end
+
+    ApplyNoclip()
+
+    if not Settings.Fly then
+        root.AssemblyLinearVelocity = Vector3.zero
+        return
+    end
+
+    circleAngle += math.rad(Settings.CircleSpeed)
+    if circleAngle >= math.pi * 2 then circleAngle -= math.pi * 2 end
+
+    local desired = targetRoot.Position + Vector3.new(
+        math.cos(circleAngle) * Settings.CircleRadius,
+        Settings.CircleHeight,
+        math.sin(circleAngle) * Settings.CircleRadius
+    )
+
+    local offset = desired - root.Position
+    local distance = offset.Magnitude
+
+    -- Smooth client-side flight. Uses velocity rather than teleporting every frame.
+    if distance > 0.35 then
+        local desiredVelocity = offset.Unit * math.clamp(distance * 6, 0, Settings.FlySpeed)
+        root.AssemblyLinearVelocity = root.AssemblyLinearVelocity:Lerp(desiredVelocity, 0.35)
+    else
+        root.AssemblyLinearVelocity = root.AssemblyLinearVelocity:Lerp(Vector3.zero, 0.35)
+    end
+
+    local targetDistance = (targetRoot.Position-root.Position).Magnitude
+    if targetDistance <= Settings.AttackRange then
+        Attack(Target.Character)
+    end
+end
+
+StartScript = function()
+    local selected = GetBestTarget()
+
+    if not selected then
+        if _G.StatusLabel then
+            _G.StatusLabel.Text = "Статус: выбери живую цель"
+        end
+        return false
+    end
+
+    Target = selected
+
+    if connection then
+        connection:Disconnect()
+        connection = nil
+    end
+
+    isActive = true
+
+    if _G.StatusLabel then
+        _G.StatusLabel.Text = "Статус: Активен — " .. Target.DisplayName
+    end
+
+    connection = RunService.Heartbeat:Connect(MoveToTarget)
+    return true
+end
+
+StopScript = function()
+    isActive = false
+
+    if connection then
+        connection:Disconnect()
+        connection = nil
+    end
+
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.AssemblyLinearVelocity = Vector3.zero
+    end
+
+    RestoreNoclip()
+
+    if _G.StatusLabel then
+        _G.StatusLabel.Text = "Статус: Остановлен"
+    end
+end
+
+-- Noclip работает отдельно от target/fly loop.
+local noclipConnection = RunService.Stepped:Connect(function()
+    if Settings.Noclip then
+        ApplyNoclip()
+    end
+end)
+
+
 SwitchTab = function(tabName)
     currentTab = tabName
     
@@ -670,246 +914,6 @@ CreateMovementTabContent = function()
     addToggle("Noclip", "Noclip")
 end
 
--- Функции скрипта
-
-local function GetHumanoid(character)
-    return character and character:FindFirstChildOfClass("Humanoid")
-end
-
-local function GetCharacter(player)
-    return player and player.Character or nil
-end
-
-local function GetTargetRoot(player)
-    local character = GetCharacter(player)
-    return character and character:FindFirstChild("HumanoidRootPart")
-end
-
-local function IsAlive(player)
-    local character = GetCharacter(player)
-    local humanoid = GetHumanoid(character)
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    return player ~= nil and humanoid ~= nil and humanoid.Health > 0 and root ~= nil
-end
-
-local function GetNearestTarget()
-    local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not localRoot then return nil end
-
-    local nearest = nil
-    local nearestDistance = math.huge
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and IsAlive(player) then
-            local root = GetTargetRoot(player)
-            if root then
-                local distance = (root.Position - localRoot.Position).Magnitude
-                if distance < nearestDistance then
-                    nearest = player
-                    nearestDistance = distance
-                end
-            end
-        end
-    end
-
-    return nearest
-end
-
-local function RestoreNoclip()
-    for part, originalCanCollide in pairs(noclipParts) do
-        if part and part.Parent then
-            part.CanCollide = originalCanCollide
-        end
-    end
-    table.clear(noclipParts)
-end
-
-local function ApplyNoclip()
-    local character = LocalPlayer.Character
-    if not character then return end
-
-    if not Settings.Noclip then
-        RestoreNoclip()
-        return
-    end
-
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            if noclipParts[part] == nil then
-                noclipParts[part] = part.CanCollide
-            end
-            part.CanCollide = false
-        end
-    end
-end
-
-local function EquipWeapon()
-    if not Settings.AutoWeapon then return end
-
-    local character = LocalPlayer.Character
-    if not character then return end
-
-    if character:FindFirstChildOfClass("Tool") then
-        return
-    end
-
-    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-    local humanoid = GetHumanoid(character)
-    if not backpack or not humanoid then return end
-
-    local tool = backpack:FindFirstChildOfClass("Tool")
-    if tool then
-        humanoid:EquipTool(tool)
-    end
-end
-
-local function Attack(targetCharacter)
-    if not targetCharacter then return end
-
-    local humanoid = GetHumanoid(targetCharacter)
-    if not humanoid or humanoid.Health <= 0 then return end
-
-    local now = os.clock()
-    if now - lastAttackTime < Settings.AttackCooldown then
-        return
-    end
-
-    EquipWeapon()
-
-    local character = LocalPlayer.Character
-    local tool = character and character:FindFirstChildOfClass("Tool")
-    if not tool then return end
-
-    local ok, err = pcall(function()
-        tool:Activate()
-    end)
-
-    if ok then
-        lastAttackTime = now
-    else
-        warn("[AI Target] Ошибка атаки:", err)
-    end
-end
-
-local function GetBestTarget()
-    if Settings.AutoTarget then
-        return GetNearestTarget()
-    end
-
-    if Target and IsAlive(Target) then
-        return Target
-    end
-
-    return nil
-end
-
-local function MoveToTarget()
-    if not isActive then return end
-
-    if Settings.AutoTarget then
-        local nearest = GetNearestTarget()
-        if nearest then Target = nearest end
-    end
-
-    if not Target or not IsAlive(Target) then
-        StopScript()
-        return
-    end
-
-    local character = LocalPlayer.Character
-    local humanoid = GetHumanoid(character)
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    local targetRoot = GetTargetRoot(Target)
-    if not humanoid or not root or not targetRoot then return end
-
-    ApplyNoclip()
-
-    if not Settings.Fly then
-        root.AssemblyLinearVelocity = Vector3.zero
-        return
-    end
-
-    circleAngle += math.rad(Settings.CircleSpeed)
-    if circleAngle >= math.pi * 2 then circleAngle -= math.pi * 2 end
-
-    local desired = targetRoot.Position + Vector3.new(
-        math.cos(circleAngle) * Settings.CircleRadius,
-        Settings.CircleHeight,
-        math.sin(circleAngle) * Settings.CircleRadius
-    )
-
-    local offset = desired - root.Position
-    local distance = offset.Magnitude
-
-    -- Smooth client-side flight. Uses velocity rather than teleporting every frame.
-    if distance > 0.35 then
-        local desiredVelocity = offset.Unit * math.clamp(distance * 6, 0, Settings.FlySpeed)
-        root.AssemblyLinearVelocity = root.AssemblyLinearVelocity:Lerp(desiredVelocity, 0.35)
-    else
-        root.AssemblyLinearVelocity = root.AssemblyLinearVelocity:Lerp(Vector3.zero, 0.35)
-    end
-
-    local targetDistance = (targetRoot.Position-root.Position).Magnitude
-    if targetDistance <= Settings.AttackRange then
-        Attack(Target.Character)
-    end
-end
-
-StartScript = function()
-    local selected = GetBestTarget()
-
-    if not selected then
-        if _G.StatusLabel then
-            _G.StatusLabel.Text = "Статус: выбери живую цель"
-        end
-        return false
-    end
-
-    Target = selected
-
-    if connection then
-        connection:Disconnect()
-        connection = nil
-    end
-
-    isActive = true
-
-    if _G.StatusLabel then
-        _G.StatusLabel.Text = "Статус: Активен — " .. Target.DisplayName
-    end
-
-    connection = RunService.Heartbeat:Connect(MoveToTarget)
-    return true
-end
-
-StopScript = function()
-    isActive = false
-
-    if connection then
-        connection:Disconnect()
-        connection = nil
-    end
-
-    local character = LocalPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if root then
-        root.AssemblyLinearVelocity = Vector3.zero
-    end
-
-    RestoreNoclip()
-
-    if _G.StatusLabel then
-        _G.StatusLabel.Text = "Статус: Остановлен"
-    end
-end
-
--- Noclip работает отдельно от target/fly loop.
-local noclipConnection = RunService.Stepped:Connect(function()
-    if Settings.Noclip then
-        ApplyNoclip()
-    end
-end)
-
 -- Подключаем кнопку сворачивания
 MinimizeButton.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
@@ -954,12 +958,12 @@ SwitchTab("Главная")
 
 -- Добавляем GUI на экран
 local PlayerGui = LocalPlayer and LocalPlayer:WaitForChild("PlayerGui")
-
-if PlayerGui then
-    ScreenGui.Parent = PlayerGui
-else
-    ScreenGui.Parent = game:GetService("CoreGui")
+if not PlayerGui then
+    warn("[AI Target] PlayerGui не найден. Запусти скрипт в клиентском контексте.")
+    return
 end
 
-print("✅ AI Target • v5.1 загружен!")
+ScreenGui.Parent = PlayerGui
+
+print("✅ AI Target • v5.2.1 загружен!")
 print("💡 Выбери игрока из списка и нажми 'Запустить'")
