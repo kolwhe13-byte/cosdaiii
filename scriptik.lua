@@ -562,26 +562,50 @@ local function MakeSlider(parent, text, key, minV, maxV, step)
 end
 
 -- Drag
+-- =========================
+-- Перетаскивание за любую часть GUI
+-- =========================
 do
-	local dragging, dragStart, startPos = false, nil, nil
-	Header.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+	local dragging = false
+	local dragStart = nil
+	local startPos = nil
+
+	local function beginDrag(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
 			dragStart = input.Position
 			startPos = Main.Position
 		end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
-		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+	end
+
+	local function updateDrag(input)
+		if not dragging then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
 			local delta = input.Position - dragStart
-			Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			Main.Position = UDim2.new(
+				startPos.X.Scale,
+				startPos.X.Offset + delta.X,
+				startPos.Y.Scale,
+				startPos.Y.Offset + delta.Y
+			)
 		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+	end
+
+	local function endDrag(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
 		end
-	end)
+	end
+
+	-- Тащим за всё окно
+	Main.InputBegan:Connect(beginDrag)
+	Header.InputBegan:Connect(beginDrag)
+
+	UserInputService.InputChanged:Connect(updateDrag)
+	UserInputService.InputEnded:Connect(endDrag)
 end
 
 --------------------------------------------------
