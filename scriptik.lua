@@ -1,6 +1,6 @@
 --[[
-    Задрочка типов v5.2
-    За спиной + исправлена потеря цели + Gameplay Paused при телепорте
+    Задрочка типов v5.3
+    Исправлен noclip + одна кнопка + килаура + центр настроек
 ]]
 
 local Players          = game:GetService("Players")
@@ -95,7 +95,7 @@ local function Hum()
 end
 
 --------------------------------------------------
--- Noclip
+-- Noclip (ИСПРАВЛЕН)
 --------------------------------------------------
 local function RestoreNoclip()
 	for part, old in pairs(noclipCache) do
@@ -119,7 +119,9 @@ RunService.Stepped:Connect(function()
 				if noclipCache[obj] == nil then
 					noclipCache[obj] = obj.CanCollide
 				end
-				obj.CanCollide = false
+				if obj.CanCollide ~= false then
+					obj.CanCollide = false
+				end
 			end
 		end
 	end
@@ -257,7 +259,7 @@ local function RefreshESP()
 end
 
 --------------------------------------------------
--- Таргет
+-- Таргет (КИЛАУРА)
 --------------------------------------------------
 local function StopTarget()
 	isActive = false
@@ -270,7 +272,7 @@ local function StopTarget()
 		h.PlatformStand = false
 	end
 	if not S.Noclip then RestoreNoclip() end
-	if StatusLabel then StatusLabel.Text = "Статус: остановлен" end
+	if StatusLabel then StatusLabel.Text = "Статус: остановлена" end
 end
 
 local function StartTarget()
@@ -280,7 +282,24 @@ local function StartTarget()
 	end
 	isActive = true
 	if StatusLabel then
-		StatusLabel.Text = "Статус: активен • " .. (Target.DisplayName or Target.Name)
+		StatusLabel.Text = "Статус: килаура активна • " .. (Target.DisplayName or Target.Name)
+	end
+end
+
+local function ToggleTarget()
+	if isActive then
+		StopTarget()
+	else
+		if not Target then
+			local n = Nearest()
+			if n then
+				Target = n
+			else
+				if StatusLabel then StatusLabel.Text = "Статус: нет целей" end
+				return
+			end
+		end
+		StartTarget()
 	end
 end
 
@@ -321,14 +340,21 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- ===== ТАРГЕТ =====
+	-- ===== КИЛАУРА =====
 	if not isActive or not Target then return end
 
-	if not Target.Parent then
-		Target = nil
-		StopTarget()
-		if StatusLabel then StatusLabel.Text = "Статус: цель вышла" end
-		return
+	-- Автоматический поиск новой цели если текущая мертва
+	local tHum = Target.Character and Target.Character:FindFirstChildOfClass("Humanoid")
+	if not Target.Parent or (tHum and tHum.Health <= 0) then
+		local n = Nearest()
+		if n then
+			Target = n
+		else
+			Target = nil
+			StopTarget()
+			if StatusLabel then StatusLabel.Text = "Статус: нет целей" end
+			return
+		end
 	end
 
 	local myRoot = Root(LocalPlayer)
@@ -343,22 +369,6 @@ RunService.Heartbeat:Connect(function(dt)
 		myHum.PlatformStand = true
 	end
 
-	-- Смерть цели
-	local tHum = Target.Character and Target.Character:FindFirstChildOfClass("Humanoid")
-	if tHum and tHum.Health <= 0 then
-		task.delay(0.6, function()
-			if Target and Target.Character then
-				local h = Target.Character:FindFirstChildOfClass("Humanoid")
-				if h and h.Health <= 0 then
-					Target = nil
-					StopTarget()
-					if StatusLabel then StatusLabel.Text = "Статус: цель мертва" end
-				end
-			end
-		end)
-		return
-	end
-
 	-- Смотрим на цель (только горизонталь)
 	local lookPos = Vector3.new(tRoot.Position.X, myRoot.Position.Y, tRoot.Position.Z)
 	myRoot.CFrame = CFrame.lookAt(myRoot.Position, lookPos)
@@ -371,12 +381,11 @@ RunService.Heartbeat:Connect(function(dt)
 	-- Высота: следуем за целью при прыжке, но не улетаем в небо
 	local targetY = tRoot.Position.Y + S.BehindHeight
 	local currentY = myRoot.Position.Y
-	local maxUpSpeed = 40 -- максимальная скорость подъёма
+	local maxUpSpeed = 40
 	local desiredY = targetY
 
-	-- Если цель прыгнула — догоняем, но плавно
 	if desiredY > currentY + 8 then
-		desiredY = currentY + 8 -- не даём резко взлететь
+		desiredY = currentY + 8
 	end
 
 	local desired = Vector3.new(
@@ -393,7 +402,6 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local vel = delta.Unit * speed
 
-		-- Жёстко ограничиваем вертикальную скорость (главный фикс улёта в небо)
 		if vel.Y > maxUpSpeed then
 			vel = Vector3.new(vel.X, maxUpSpeed, vel.Z)
 		elseif vel.Y < -60 then
@@ -402,7 +410,6 @@ RunService.Heartbeat:Connect(function(dt)
 
 		myRoot.AssemblyLinearVelocity = vel
 	else
-		-- Когда уже на месте — почти останавливаем, только лёгкое удержание
 		myRoot.AssemblyLinearVelocity = Vector3.new(0, math.clamp(desiredY - currentY, -15, 15), 0)
 	end
 
@@ -664,10 +671,13 @@ local function newPage(name)
 	local pad = Instance.new("UIPadding", p)
 	pad.PaddingTop = UDim.new(0, 2)
 	pad.PaddingBottom = UDim.new(0, 20)
+	pad.PaddingLeft = UDim.new(0, 4)
+	pad.PaddingRight = UDim.new(0, 4)
 
 	local lay = Instance.new("UIListLayout", p)
 	lay.Padding = UDim.new(0, 5)
 	lay.SortOrder = Enum.SortOrder.LayoutOrder
+	lay.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	Pages[name] = p
 	return p
 end
@@ -687,13 +697,14 @@ local function show(name)
 end
 
 --------------------------------------------------
--- Вкладка Таргет
+-- Вкладка Таргет (КИЛАУРА)
 --------------------------------------------------
 local pageT = newPage("Таргет")
 newTab("Таргет")
 
 local settingsBtn = btn(pageT, "▼  Настройки таргета", 28)
 settingsBtn.BackgroundColor3 = Color3.fromRGB(45, 55, 75)
+settingsBtn.Size = UDim2.new(0.9, 0, 0, 28)
 
 local settingsFrame = Instance.new("Frame")
 settingsFrame.Size = UDim2.new(1, 0, 0, 0)
@@ -704,6 +715,7 @@ settingsFrame.Parent = pageT
 
 local sLay = Instance.new("UIListLayout", settingsFrame)
 sLay.Padding = UDim.new(0, 4)
+sLay.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
 slider(settingsFrame, "Скорость за спиной", "BehindSpeed", 20, 160, 5)
 slider(settingsFrame, "Дистанция за спиной", "BehindDistance", 1, 12, 0.5)
@@ -730,7 +742,7 @@ end)
 lbl(pageT, "Выбор цели", 15)
 
 local Search = Instance.new("TextBox")
-Search.Size = UDim2.new(1, 0, 0, 26)
+Search.Size = UDim2.new(0.9, 0, 0, 26)
 Search.BackgroundColor3 = Color3.fromRGB(26, 30, 40)
 Search.TextColor3 = Color3.new(1, 1, 1)
 Search.PlaceholderColor3 = Color3.fromRGB(115, 125, 140)
@@ -748,7 +760,7 @@ local TargetInfo = lbl(pageT, "Цель: не выбрана", 15)
 TargetInfo.TextColor3 = Color3.fromRGB(110, 175, 255)
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, 0, 0, 85)
+PlayerList.Size = UDim2.new(0.9, 0, 0, 85)
 PlayerList.BackgroundColor3 = Color3.fromRGB(20, 23, 30)
 PlayerList.BorderSizePixel = 0
 PlayerList.ScrollBarThickness = 3
@@ -789,6 +801,7 @@ local function refreshList()
 		if q == "" or p.DisplayName:lower():find(q, 1, true) or p.Name:lower():find(q, 1, true) then
 			local alive = Alive(p)
 			local b = btn(PlayerList, (alive and "● " or "○ ") .. p.DisplayName, 26)
+			b.Size = UDim2.new(0.95, 0, 0, 26)
 			b.BackgroundColor3 = (p == Target) and Color3.fromRGB(48, 75, 120) or (alive and Color3.fromRGB(32, 38, 50) or Color3.fromRGB(42, 35, 38))
 			b.TextColor3 = alive and Color3.fromRGB(235, 238, 245) or Color3.fromRGB(125, 130, 140)
 			b.MouseButton1Click:Connect(function()
@@ -808,34 +821,31 @@ btn(pageT, "Выбрать ближайшую", 28).MouseButton1Click:Connect(fu
 	if n then Target = n refreshList() end
 end)
 
-btn(pageT, "⚔ Атаковать ближайшего", 30).MouseButton1Click:Connect(function()
-	local n = Nearest()
-	if n then
-		Target = n
-		refreshList()
-		StartTarget()
-	else
-		if StatusLabel then StatusLabel.Text = "Статус: нет целей" end
-	end
-end)
-
 --------------------------------------------------
--- Нижние кнопки
+-- Нижняя кнопка (ОДНА КНОПКА)
 --------------------------------------------------
-local startB = btn(Bottom, "▶  ЗАПУСТИТЬ", 32)
-startB.BackgroundColor3 = Color3.fromRGB(38, 120, 70)
-startB.Position = UDim2.fromOffset(0, 0)
+local toggleB = btn(Bottom, "▶  КИЛАУРА", 32)
+toggleB.BackgroundColor3 = Color3.fromRGB(38, 120, 70)
+toggleB.Position = UDim2.fromOffset(0, 0)
 
-local stopB = btn(Bottom, "■  ОСТАНОВИТЬ", 28)
-stopB.BackgroundColor3 = Color3.fromRGB(120, 42, 48)
-stopB.Position = UDim2.fromOffset(0, 36)
-
-StatusLabel = lbl(Bottom, "Статус: остановлен", 15)
-StatusLabel.Position = UDim2.fromOffset(0, 70)
+StatusLabel = lbl(Bottom, "Статус: остановлена", 15)
+StatusLabel.Position = UDim2.fromOffset(0, 38)
 StatusLabel.TextColor3 = Color3.fromRGB(145, 155, 170)
 
-startB.MouseButton1Click:Connect(StartTarget)
-stopB.MouseButton1Click:Connect(StopTarget)
+local function updateToggleBtn()
+	if isActive then
+		toggleB.BackgroundColor3 = Color3.fromRGB(120, 42, 48)
+		toggleB.Text = "■  КИЛАУРА"
+	else
+		toggleB.BackgroundColor3 = Color3.fromRGB(38, 120, 70)
+		toggleB.Text = "▶  КИЛАУРА"
+	end
+end
+
+toggleB.MouseButton1Click:Connect(function()
+	ToggleTarget()
+	updateToggleBtn()
+end)
 
 --------------------------------------------------
 -- Вкладка Доп.
@@ -964,4 +974,4 @@ end)
 
 RunService.Heartbeat:Connect(updInfo)
 
-print("[Задрочка типов] v5.2 загружена")
+print("[Задрочка типов] v5.3 загружена")
