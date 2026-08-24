@@ -1,6 +1,7 @@
 --[[
-    Задрочка типов v5.4
+    Задрочка типов v5.5
     Килаура мгновенно сбрасывает мертвую цель + уменьшен GUI
+    ИСПРАВЛЕНО: Noclip, дальность килауры, ESP видимость
 ]]
 
 local Players          = game:GetService("Players")
@@ -28,7 +29,7 @@ local S = {
 	JitterAmount    = 1.2,
 	JitterSpeed     = 8,
 
-	AttackRange     = 7,
+	AttackRange     = 25,
 	AttackCooldown  = 0.75,
 
 	AutoWeapon      = true,
@@ -42,6 +43,7 @@ local S = {
 	ESP_Highlight   = true,
 	ESP_Name        = true,
 	ESP_Distance    = true,
+	ESP_MaxDistance = 30000,
 }
 
 local Target       = nil
@@ -113,13 +115,11 @@ RunService.Stepped:Connect(function()
 
 	for _, obj in ipairs(char:GetDescendants()) do
 		if obj:IsA("BasePart") then
-			if obj.Name == "HumanoidRootPart" then
-				obj.CanCollide = true
-			else
+			if obj.Name ~= "HumanoidRootPart" then
 				if noclipCache[obj] == nil then
 					noclipCache[obj] = obj.CanCollide
 				end
-				if obj.CanCollide ~= false then
+				if obj.CanCollide then
 					obj.CanCollide = false
 				end
 			end
@@ -184,11 +184,11 @@ local function Nearest()
 end
 
 --------------------------------------------------
--- ESP
+-- ESP (ИСПРАВЛЕНО - зелёные боксы вместо highlight)
 --------------------------------------------------
 local function ClearESP()
 	for _, d in pairs(espData) do
-		if d.hl then d.hl:Destroy() end
+		if d.box then d.box:Destroy() end
 		if d.bb then d.bb:Destroy() end
 	end
 	table.clear(espData)
@@ -208,21 +208,34 @@ local function CreateESP(plr)
 	if not espFolder then
 		espFolder = Instance.new("Folder")
 		espFolder.Name = "ZadrochkaESP"
-		espFolder.Parent = PlayerGui
+		espFolder.Parent = workspace
 	end
 
 	local data = {}
 
+	-- Зелёный боксе вместо Highlight
 	if S.ESP_Highlight then
-		local hl = Instance.new("Highlight")
-		hl.Adornee = char
-		hl.FillColor = Color3.fromRGB(255, 50, 50)
-		hl.OutlineColor = Color3.fromRGB(255, 255, 255)
-		hl.FillTransparency = 0.55
-		hl.OutlineTransparency = 0
-		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		hl.Parent = espFolder
-		data.hl = hl
+		local box = Instance.new("Part")
+		box.Name = "ESPBox"
+		box.Shape = Enum.PartType.Block
+		box.Material = Enum.Material.Neon
+		box.CanCollide = false
+		box.CFrame = root.CFrame
+		box.Size = Vector3.new(3, 5, 3)
+		box.Color = Color3.fromRGB(0, 255, 0)
+		box.Transparency = 0.3
+		box.TopSurface = Enum.SurfaceType.Smooth
+		box.BottomSurface = Enum.SurfaceType.Smooth
+		box.Parent = espFolder
+		
+		-- Обновляем позицию через BodyVelocity
+		local bodyVel = Instance.new("BodyVelocity")
+		bodyVel.Velocity = Vector3.zero
+		bodyVel.MaxForce = Vector3.zero
+		bodyVel.Parent = box
+		
+		data.box = box
+		data.bodyVel = bodyVel
 	end
 
 	if S.ESP_Name or S.ESP_Distance then
@@ -231,7 +244,7 @@ local function CreateESP(plr)
 		bb.Size = UDim2.fromOffset(110, 34)
 		bb.StudsOffset = Vector3.new(0, 3.1, 0)
 		bb.AlwaysOnTop = true
-		bb.MaxDistance = 30000
+		bb.MaxDistance = S.ESP_MaxDistance
 		bb.Parent = espFolder
 
 		local lbl = Instance.new("TextLabel")
@@ -320,13 +333,19 @@ RunService.Heartbeat:Connect(function(dt)
 		local myRoot = Root(LocalPlayer)
 		for plr, data in pairs(espData) do
 			if not plr.Parent then
-				if data.hl then data.hl:Destroy() end
+				if data.box then data.box:Destroy() end
 				if data.bb then data.bb:Destroy() end
 				espData[plr] = nil
 			else
 				local char = plr.Character
 				local root = char and char:FindFirstChild("HumanoidRootPart")
-				if data.hl and char then data.hl.Adornee = char end
+				
+				-- Обновляем боксе
+				if data.box and root then
+					data.box.CFrame = root.CFrame
+				end
+				
+				-- Обновляем billboard
 				if data.bb and root then data.bb.Adornee = root end
 				if data.lbl then
 					local parts = {}
@@ -412,7 +431,7 @@ RunService.Heartbeat:Connect(function(dt)
 		myRoot.AssemblyLinearVelocity = Vector3.new(0, math.clamp(desiredY - currentY, -15, 15), 0)
 	end
 
-	-- Атака
+	-- Атака (ДАЛЬНОСТЬ УВЕЛИЧЕНА)
 	local attackDist = (tRoot.Position - myRoot.Position).Magnitude
 	if attackDist <= S.AttackRange then
 		Attack()
@@ -721,7 +740,7 @@ slider(settingsFrame, "Дистанция за спиной", "BehindDistance", 
 slider(settingsFrame, "Высота", "BehindHeight", -5, 15, 0.5)
 slider(settingsFrame, "Сила дрожания", "JitterAmount", 0, 4, 0.1)
 slider(settingsFrame, "Скорость дрожания", "JitterSpeed", 1, 20, 1)
-slider(settingsFrame, "Дальность удара", "AttackRange", 2, 20, 0.5)
+slider(settingsFrame, "Дальность удара", "AttackRange", 2, 100, 0.5)
 slider(settingsFrame, "Задержка атаки", "AttackCooldown", 0.2, 2.5, 0.05)
 slider(settingsFrame, "Слот оружия", "WeaponSlot", 1, 10, 1)
 toggle(settingsFrame, "Автооружие", S.AutoWeapon, function(v) S.AutoWeapon = v end)
@@ -869,7 +888,7 @@ toggle(pageE, "ESP Вкл", S.ESP, function(v)
 	S.ESP = v
 	if v then RefreshESP() else ClearESP() end
 end)
-toggle(pageE, "Подсветка", S.ESP_Highlight, function(v)
+toggle(pageE, "Подсветка (боксе)", S.ESP_Highlight, function(v)
 	S.ESP_Highlight = v
 	if S.ESP then RefreshESP() end
 end)
@@ -932,7 +951,7 @@ Players.PlayerAdded:Connect(function(p)
 		if S.ESP then
 			if espData[p] then
 				local d = espData[p]
-				if d.hl then d.hl:Destroy() end
+				if d.box then d.box:Destroy() end
 				if d.bb then d.bb:Destroy() end
 				espData[p] = nil
 			end
@@ -949,14 +968,14 @@ Players.PlayerRemoving:Connect(function(p)
 	end
 	if espData[p] then
 		local d = espData[p]
-		if d.hl then d.hl:Destroy() end
+		if d.box then d.box:Destroy() end
 		if d.bb then d.bb:Destroy() end
 		espData[p] = nil
 	end
 	task.defer(refreshList)
 end)
 
--- При своём телепорте/респавне
+-- При своём телепорте/rispawne
 LocalPlayer.CharacterAdded:Connect(function()
 	RemovePaused()
 	task.delay(0.25, RemovePaused)
@@ -973,4 +992,4 @@ end)
 
 RunService.Heartbeat:Connect(updInfo)
 
-print("[Задрочка типов] v5.4 загружена")
+print("[Задрочка типов] v5.5 загружена с исправлениями")
