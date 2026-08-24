@@ -265,6 +265,10 @@ local function StopTarget()
 	if root then
 		root.AssemblyLinearVelocity = Vector3.zero
 	end
+	local h = Hum()
+	if h then
+		h.PlatformStand = false
+	end
 	if not S.Noclip then RestoreNoclip() end
 	if StatusLabel then StatusLabel.Text = "Статус: остановлен" end
 end
@@ -317,10 +321,9 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- ===== ТАРГЕТ (не теряет цель) =====
+	-- ===== ТАРГЕТ =====
 	if not isActive or not Target then return end
 
-	-- Игрок вышел с сервера
 	if not Target.Parent then
 		Target = nil
 		StopTarget()
@@ -330,16 +333,20 @@ RunService.Heartbeat:Connect(function(dt)
 
 	local myRoot = Root(LocalPlayer)
 	local tRoot  = Root(Target)
+	local myHum  = Hum()
 
-	-- Временно нет Character (телепорт/стриминг) — просто ждём
-	if not myRoot or not tRoot then
-		return
+	-- Временно нет Character — ждём
+	if not myRoot or not tRoot then return end
+
+	-- PlatformStand чтобы физика меньше мешала
+	if myHum and not myHum.PlatformStand then
+		myHum.PlatformStand = true
 	end
 
-	-- Смерть цели (с небольшой задержкой)
+	-- Смерть цели
 	local tHum = Target.Character and Target.Character:FindFirstChildOfClass("Humanoid")
 	if tHum and tHum.Health <= 0 then
-		task.delay(0.5, function()
+		task.delay(0.6, function()
 			if Target and Target.Character then
 				local h = Target.Character:FindFirstChildOfClass("Humanoid")
 				if h and h.Health <= 0 then
@@ -352,7 +359,7 @@ RunService.Heartbeat:Connect(function(dt)
 		return
 	end
 
-	-- Смотрим на цель
+	-- Смотрим на цель (только горизонталь)
 	local lookPos = Vector3.new(tRoot.Position.X, myRoot.Position.Y, tRoot.Position.Z)
 	myRoot.CFrame = CFrame.lookAt(myRoot.Position, lookPos)
 
@@ -361,23 +368,47 @@ RunService.Heartbeat:Connect(function(dt)
 	local jitter = math.sin(tick() * S.JitterSpeed) * S.JitterAmount
 	local right = tRoot.CFrame.RightVector
 
-	local desired = tRoot.Position
-		+ behindDir * S.BehindDistance
-		+ right * jitter
-		+ Vector3.new(0, S.BehindHeight, 0)
+	-- Высота: следуем за целью при прыжке, но не улетаем в небо
+	local targetY = tRoot.Position.Y + S.BehindHeight
+	local currentY = myRoot.Position.Y
+	local maxUpSpeed = 40 -- максимальная скорость подъёма
+	local desiredY = targetY
+
+	-- Если цель прыгнула — догоняем, но плавно
+	if desiredY > currentY + 8 then
+		desiredY = currentY + 8 -- не даём резко взлететь
+	end
+
+	local desired = Vector3.new(
+		tRoot.Position.X + behindDir.X * S.BehindDistance + right.X * jitter,
+		desiredY,
+		tRoot.Position.Z + behindDir.Z * S.BehindDistance + right.Z * jitter
+	)
 
 	local delta = desired - myRoot.Position
-	local dist  = delta.Magnitude
+	local dist = delta.Magnitude
 
-	if dist > 0.35 then
-		local speed = math.min(S.BehindSpeed, dist * 12)
-		myRoot.AssemblyLinearVelocity = delta.Unit * speed
+	if dist > 0.4 then
+		local speed = math.min(S.BehindSpeed, dist * 11)
+
+		local vel = delta.Unit * speed
+
+		-- Жёстко ограничиваем вертикальную скорость (главный фикс улёта в небо)
+		if vel.Y > maxUpSpeed then
+			vel = Vector3.new(vel.X, maxUpSpeed, vel.Z)
+		elseif vel.Y < -60 then
+			vel = Vector3.new(vel.X, -60, vel.Z)
+		end
+
+		myRoot.AssemblyLinearVelocity = vel
 	else
-		myRoot.AssemblyLinearVelocity = Vector3.zero
+		-- Когда уже на месте — почти останавливаем, только лёгкое удержание
+		myRoot.AssemblyLinearVelocity = Vector3.new(0, math.clamp(desiredY - currentY, -15, 15), 0)
 	end
 
 	-- Атака
-	if (tRoot.Position - myRoot.Position).Magnitude <= S.AttackRange then
+	local attackDist = (tRoot.Position - myRoot.Position).Magnitude
+	if attackDist <= S.AttackRange then
 		Attack()
 	end
 end)
