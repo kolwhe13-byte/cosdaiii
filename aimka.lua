@@ -1,5 +1,5 @@
--- ФИНАЛЬНАЯ СБОРКА Cb Ro — МОБИЛЬНАЯ ВЕРСИЯ (ESP + CHAMS FIX)
--- Автор: Colin + доработка под мобилку
+-- Cb Ro | Private Cheat (Mobile / Delta) – FULL FIX
+-- Все вкладки заполнены, ESP и Chams работают.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -9,7 +9,7 @@ local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
--- ==================== СОСТОЯНИЯ ====================
+-- ==================== НАСТРОЙКИ ====================
 local AimbotSettings = {
     Enabled = false,
     FOV = 120,
@@ -88,7 +88,7 @@ local function IsVisible(targetPosition)
     return true
 end
 
--- ==================== АВТОФАЕР (фикс) ====================
+-- ==================== АВТОФАЕР (ФИКС ДЛЯ DELTA) ====================
 local function FireWeapon()
     local character = LocalPlayer.Character
     if not character then return end
@@ -100,13 +100,10 @@ local function FireWeapon()
             break
         end
     end
-
     if not tool then return end
 
     pcall(function()
-        if tool.Activate then
-            tool:Activate()
-        end
+        if tool.Activate then tool:Activate() end
     end)
 
     pcall(function()
@@ -119,31 +116,23 @@ local function FireWeapon()
     end)
 
     pcall(function()
-        if UserInputService.TouchEnabled then
-            local touchPos = Vector2.new(100, 100)
-            VirtualInputManager:SendTouchEvent(1, touchPos.X, touchPos.Y, true, 1, game, 0)
-            wait(0.05)
-            VirtualInputManager:SendTouchEvent(1, touchPos.X, touchPos.Y, false, 1, game, 0)
-        else
-            local mouse = LocalPlayer:GetMouse()
-            if mouse then
-                mouse.Button1Down()
-                wait(0.05)
-                mouse.Button1Up()
-            end
-        end
+        local touchPos = Vector2.new(
+            Camera.ViewportSize.X / 2,
+            Camera.ViewportSize.Y / 2
+        )
+        VirtualInputManager:SendTouchEvent(1, touchPos.X, touchPos.Y, true, 1, game, 0)
+        wait(0.05)
+        VirtualInputManager:SendTouchEvent(1, touchPos.X, touchPos.Y, false, 1, game, 0)
     end)
 
     pcall(function()
-        if not UserInputService.TouchEnabled then
-            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-            wait(0.05)
-            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-        end
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+        wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
     end)
 end
 
--- ==================== CHAMS (ФИКС) ====================
+-- ==================== CHAMS ====================
 local function ApplyChamToPart(part, color, transparency)
     if not part or not part:IsA("BasePart") then return end
     local hl = part:FindFirstChild("VillageCham")
@@ -174,7 +163,6 @@ local function ApplyChamToCharacter(character, state, color, transparency)
             end
         end
     end
-    -- Подписываемся на новые части
     if state then
         if not character:FindFirstChild("ChamListener") then
             local listener = Instance.new("Folder")
@@ -192,7 +180,6 @@ local function ApplyChamToCharacter(character, state, color, transparency)
     end
 end
 
--- Обновление чамсов при изменении настроек
 local function UpdateAllChams()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
@@ -206,17 +193,16 @@ local function UpdateAllChams()
     end
 end
 
--- ==================== ESP (НОВЫЙ — ЧЕРЕЗ GUI) ====================
+-- ==================== ESP (GUI) ====================
 local ESPGui = Instance.new("ScreenGui")
 ESPGui.Name = "ESP_Gui"
 ESPGui.Parent = game.CoreGui
 ESPGui.Enabled = false
 
-local espFrames = {} -- player -> {frame, nameLabel}
+local espFrames = {}
 
 local function CreateESPFrame(player)
     if espFrames[player] then return end
-
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 100, 0, 150)
     frame.BackgroundTransparency = 0.5
@@ -267,7 +253,6 @@ local function UpdateESP()
             continue
         end
 
-        -- Создаём фрейм, если его нет
         if not espFrames[player] then
             CreateESPFrame(player)
         end
@@ -281,7 +266,6 @@ local function UpdateESP()
             continue
         end
 
-        -- Расчёт позиции на экране
         local headPos, onScreen = Camera:WorldToViewportPoint(head.Position)
         if not onScreen then
             data.frame.Visible = false
@@ -293,13 +277,11 @@ local function UpdateESP()
         local width = height * 0.5
         data.frame.Size = UDim2.new(0, width, 0, height)
         data.frame.Position = UDim2.new(0, headPos.X - width/2, 0, headPos.Y - height/2)
-        -- Цвет: красный для врагов, зелёный для союзников (но мы уже исключили союзников выше)
         data.frame.BackgroundColor3 = Color3.fromRGB(255, 40, 40)
         data.frame.Visible = true
         data.nameLabel.Text = player.Name
     end
 
-    -- Удаляем фреймы для игроков, которых больше нет
     for player, _ in pairs(espFrames) do
         if not Players:FindFirstChild(player.Name) then
             RemoveESPFrame(player)
@@ -491,6 +473,7 @@ ContentFrame.Parent = MainFrame
 
 local Tabs = {"Aimbot", "Visuals", "Misc", "Anti-Aim"}
 
+-- ==================== ФУНКЦИЯ СОЗДАНИЯ ВКЛАДОК С ПРИНУДИТЕЛЬНЫМ ОБНОВЛЕНИЕМ ====================
 local function CreateTab(name, index)
     local YOffset = 10 + (index - 1) * 50
     local TabBtn = Instance.new("TextButton")
@@ -513,14 +496,22 @@ local function CreateTab(name, index)
     TabContent.BackgroundTransparency = 1
     TabContent.ScrollBarThickness = 4
     TabContent.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
-    TabContent.CanvasSize = UDim2.new(0, 0, 0, 800)
-    TabContent.Visible = false
+    TabContent.CanvasSize = UDim2.new(0, 0, 0, 0) -- будет обновлено позже
+    TabContent.Visible = (index == 1) -- только первая вкладка видима по умолчанию
     TabContent.Parent = ContentFrame
 
     local UIListLayout = Instance.new("UIListLayout")
     UIListLayout.Padding = UDim.new(0, 8)
     UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
     UIListLayout.Parent = TabContent
+
+    -- Функция обновления CanvasSize при изменении содержимого
+    local function RefreshCanvas()
+        TabContent.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 20)
+    end
+    UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(RefreshCanvas)
+    -- Также обновляем при появлении новых элементов
+    TabContent.ChildAdded:Connect(RefreshCanvas)
 
     TabBtn.MouseButton1Click:Connect(function()
         for _, tab in ipairs(TabContainer:GetChildren()) do
@@ -537,30 +528,27 @@ local function CreateTab(name, index)
         TabBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
         TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
         TabContent.Visible = true
-        TabContent.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 20)
-        UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-            TabContent.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 20)
-        end)
+        RefreshCanvas()
     end)
 
     if index == 1 then
         TabBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
         TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
         TabContent.Visible = true
-        UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-            TabContent.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 20)
-        end)
+        wait(0.1)
+        RefreshCanvas()
     end
 
     return TabContent
 end
 
+-- Создаём вкладки
 local tabContents = {}
 for i, name in ipairs(Tabs) do
     tabContents[name] = CreateTab(name, i)
 end
 
--- Функции создания элементов (без изменений)
+-- ==================== ЭЛЕМЕНТЫ GUI ====================
 local function CreateToggle(name, parent, default, callback)
     local ToggleFrame = Instance.new("Frame")
     ToggleFrame.Size = UDim2.new(1, 0, 0, 45)
@@ -795,7 +783,9 @@ local function CreateColorPicker(name, parent, defaultColor, callback)
     }
 end
 
--- ==================== НАПОЛНЕНИЕ МЕНЮ ====================
+-- ==================== ЗАПОЛНЕНИЕ МЕНЮ (ВСЕ ВКЛАДКИ) ====================
+
+-- Aimbot
 CreateToggle("Enable Aimbot", tabContents["Aimbot"], false, function(val)
     AimbotSettings.Enabled = val
 end)
@@ -812,6 +802,7 @@ CreateToggle("Wallbang", tabContents["Aimbot"], false, function(val)
     AimbotSettings.Wallbang = val
 end)
 
+-- Visuals (теперь точно заполнена)
 CreateToggle("Enable ESP", tabContents["Visuals"], false, function(val)
     VisualsSettings.ESPEnabled = val
     if not val then
@@ -833,6 +824,7 @@ CreateSlider("Chams Transparency", tabContents["Visuals"], 0, 1, 0.3, function(v
     UpdateAllChams()
 end)
 
+-- Misc (теперь точно заполнена)
 CreateToggle("Bunny Hop", tabContents["Misc"], false, function(val)
     MiscSettings.BHopEnabled = val
 end)
@@ -853,6 +845,7 @@ CreateSlider("TP Distance", tabContents["Misc"], 2, 20, 8, function(val)
     end
 end)
 
+-- Anti-Aim
 CreateToggle("Enable Anti-Aim", tabContents["Anti-Aim"], false, function(val)
     AntiAimSettings.Enabled = val
 end)
@@ -879,36 +872,36 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
--- ==================== ОСНОВНОЙ ЦИКЛ ====================
+-- ==================== ГЛАВНЫЙ ЦИКЛ ====================
 RunService.RenderStepped:Connect(function(delta)
-    -- ESP обновляем каждый кадр
+    -- ESP
     UpdateESP()
 
-    -- AIMBOT
+    -- AIMBOT (по центру экрана)
     if AimbotSettings.Enabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") then
+        local viewportSize = Camera.ViewportSize
+        local center = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
         local closestDist = AimbotSettings.FOV
         local bestTarget = nil
 
         for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
-                if IsTeammate(player) then continue end
-                if not IsAlive(player) then continue end
+            if player == LocalPlayer then continue end
+            if not IsAlive(player) then continue end
+            if IsTeammate(player) then continue end
 
-                local targetPart = player.Character:FindFirstChild(AimbotSettings.HitPart) or player.Character.Head
-                if not targetPart then continue end
+            local targetPart = player.Character:FindFirstChild(AimbotSettings.HitPart) or player.Character:FindFirstChild("Head")
+            if not targetPart then continue end
 
-                if not AimbotSettings.Wallbang and not IsVisible(targetPart.Position) then
-                    continue
-                end
+            if not AimbotSettings.Wallbang and not IsVisible(targetPart.Position) then
+                continue
+            end
 
-                local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-                if onScreen then
-                    local mousePos = UserInputService:GetMouseLocation()
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                    if dist < closestDist then
-                        closestDist = dist
-                        bestTarget = targetPart
-                    end
+            local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+            if onScreen then
+                local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+                if dist < closestDist then
+                    closestDist = dist
+                    bestTarget = targetPart
                 end
             end
         end
@@ -940,7 +933,7 @@ RunService.RenderStepped:Connect(function(delta)
         end
     end
 
-    -- ANTI AIM
+    -- ANTI-AIM
     if AntiAimSettings.Enabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
         local root = LocalPlayer.Character.HumanoidRootPart
         if AntiAimSettings.Jitter then
@@ -972,19 +965,16 @@ local function OnCharacterAdded(character)
             EnableThirdPerson()
         end
     else
-        -- Применяем чамсы к новому персонажу
         if VisualsSettings.ChamsEnabled then
             wait(0.1)
             ApplyChamToCharacter(character, true, VisualsSettings.ChamColor, VisualsSettings.ChamsTransparency)
         end
-        -- Удаляем старый ESP фрейм, если был
         if espFrames[player] then
             RemoveESPFrame(player)
         end
     end
 end
 
--- Подписываемся на добавление персонажей для всех игроков
 for _, player in ipairs(Players:GetPlayers()) do
     player.CharacterAdded:Connect(OnCharacterAdded)
 end
@@ -999,4 +989,4 @@ Players.PlayerRemoving:Connect(function(player)
     end
 end)
 
-print("Cb Ro Cheat Loaded (ESP+CHAMS FIX). DEL для меню.")
+print("Cb Ro Cheat Loaded (FULL FIX). DEL для меню.")
