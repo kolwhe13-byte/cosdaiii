@@ -97,35 +97,37 @@ local function Hum()
 end
 
 --------------------------------------------------
--- Noclip ПОЛНОСТЬЮ ПЕРЕРАБОТАН
+-- Noclip
 --------------------------------------------------
 local function RestoreNoclip()
-	for part, oldValue in pairs(NoclipOriginal) do
+	for part, old in pairs(noclipParts) do
 		if part and part.Parent then
-			part.CanCollide = oldValue
+			part.CanCollide = old
 		end
 	end
-	table.clear(NoclipOriginal)
+	table.clear(noclipParts)
 end
 
-local function ApplyNoclip()
-	local character = LocalPlayer.Character
-	if not character then return end
-
-	if not Settings.Noclip then
-		RestoreNoclip()
+RunService.Stepped:Connect(function()
+	if not S.Noclip then
+		if next(noclipParts) then
+			RestoreNoclip()
+		end
 		return
 	end
 
-	for _, object in ipairs(character:GetDescendants()) do
-		if object:IsA("BasePart") then
-			if NoclipOriginal[object] == nil then
-				NoclipOriginal[object] = object.CanCollide
+	local char = LocalPlayer.Character
+	if not char then return end
+
+	for _, part in ipairs(char:GetDescendants()) do
+		if part:IsA("BasePart") then
+			if noclipParts[part] == nil then
+				noclipParts[part] = part.CanCollide
 			end
-			object.CanCollide = false
+			part.CanCollide = false
 		end
 	end
-end
+end)
 
 --------------------------------------------------
 -- Оружие + Атака
