@@ -100,39 +100,31 @@ end
 -- Noclip ПОЛНОСТЬЮ ПЕРЕРАБОТАН
 --------------------------------------------------
 local function RestoreNoclip()
-    for part, oldValue in pairs(NoclipOriginal) do
-        if part and part.Parent then
-            part.CanCollide = oldValue
-        end
-    end
-    table.clear(NoclipOriginal)
+	for part, oldValue in pairs(NoclipOriginal) do
+		if part and part.Parent then
+			part.CanCollide = oldValue
+		end
+	end
+	table.clear(NoclipOriginal)
 end
 
 local function ApplyNoclip()
-    local character = LocalPlayer.Character
-    if not character then
-        return
-    end
+	local character = LocalPlayer.Character
+	if not character then return end
 
-    if not Settings.Noclip then
-        RestoreNoclip()
-        return
-    end
+	if not Settings.Noclip then
+		RestoreNoclip()
+		return
+	end
 
-    for _, object in ipairs(character:GetDescendants()) do
-        if object:IsA("BasePart") then
-            if NoclipOriginal[object] == nil then
-                NoclipOriginal[object] = object.CanCollide
-            end
-
-            -- HumanoidRootPart оставляем с коллизией (не проваливаемся)
-            if object.Name == "HumanoidRootPart" then
-                object.CanCollide = true
-            else
-                object.CanCollide = false
-            end
-        end
-    end
+	for _, object in ipairs(character:GetDescendants()) do
+		if object:IsA("BasePart") then
+			if NoclipOriginal[object] == nil then
+				NoclipOriginal[object] = object.CanCollide
+			end
+			object.CanCollide = false
+		end
+	end
 end
 
 --------------------------------------------------
