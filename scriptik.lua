@@ -1,6 +1,6 @@
 --[[
     Скрипт для "Создай ИИ" (Create AI)
-    Версия: 5.0 - CLEAN UI
+    Версия: 4.0 - CLEAN UI
     Основан на предоставленном scriptik.lua.
 
     ВАЖНО:
@@ -8,6 +8,12 @@
     - Для GUI используется PlayerGui, когда он доступен.
     - Для загрузки с URL требуется среда, в которой разрешены HttpGet/loadstring.
 ]]
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
 -- Настройки
 local Settings = {
     FlySpeed = 50,
@@ -17,10 +23,8 @@ local Settings = {
     AttackRange = 5,
     AttackCooldown = 1.5,
     AutoTarget = false,
-    TargetMode = "Manual",
     AutoWeapon = true,
     WeaponSlot = 2,
-    RetreatDistance = 15,
     Noclip = true,
     Fly = true,
 }
@@ -43,6 +47,64 @@ local isMinimized = false
 local currentTab = "Main"
 local lastAttackTime = 0
 local noclipParts = {}
+
+
+local function Round(guiObject, radius)
+    if not guiObject or not guiObject:IsA("GuiObject") then return end
+    local old = guiObject:FindFirstChildOfClass("UICorner")
+    if old then old:Destroy() end
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius or 8)
+    corner.Parent = guiObject
+end
+
+local function AddStroke(guiObject, transparency)
+    if not guiObject or not guiObject:IsA("GuiObject") then return end
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(90, 105, 135)
+    stroke.Thickness = 1
+    stroke.Transparency = transparency or 0.55
+    stroke.Parent = guiObject
+end
+
+local function MakeDraggable(handle, object)
+    local dragging = false
+    local dragStart
+    local startPos
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+
+        dragging = true
+        dragStart = input.Position
+        startPos = object.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+
+        local delta = input.Position - dragStart
+        object.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end)
+end
 
 -- Создаём GUI
 local ScreenGui = Instance.new("ScreenGui")
@@ -73,10 +135,10 @@ MainFrame.BackgroundColor3 = Color3.fromRGB(15, 18, 25)
 MainFrame.BackgroundTransparency = 0.05
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
-MainFrame.Draggable = false
+MainFrame.Draggable = true
 MainFrame.ClipsDescendants = true
 MainFrame.Parent = ScreenGui
-    Round(MainFrame, 8)
+Round(MainFrame, 8)
 AddStroke(MainFrame)
 
 -- Заголовок
@@ -86,15 +148,16 @@ TitleBar.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
 TitleBar.BorderSizePixel = 0
 TitleBar.Parent = MainFrame
 MakeDraggable(TitleBar, MainFrame)
-    Round(TitleBar, 8)
+Round(TitleBar, 8)
 AddStroke(TitleBar)
+    Round(TitleBar, 8)
 
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -40, 1, 0)
 Title.Position = UDim2.new(0, 10, 0, 0)
 Title.BackgroundTransparency = 1
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.Text = "🎯 AI Target • v5.0"
+Title.Text = "🎯 AI Target • v5.1"
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 16
 Title.TextXAlignment = Enum.TextXAlignment.Left
@@ -374,662 +437,358 @@ end
 
 -- Функция создания вкладки боя
 CreateCombatTabContent = function()
-    local yOffset = 10
-    
-    -- Заголовок
-    local TargetSettingsLabel = Instance.new("TextLabel")
-    TargetSettingsLabel.Size = UDim2.new(1, -20, 0, 25)
-    TargetSettingsLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    TargetSettingsLabel.BackgroundTransparency = 1
-    TargetSettingsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    TargetSettingsLabel.Text = "⚙️ Настройки таргета"
-    TargetSettingsLabel.Font = Enum.Font.GothamBold
-    TargetSettingsLabel.TextSize = 16
-    TargetSettingsLabel.TextXAlignment = Enum.TextXAlignment.Left
-    TargetSettingsLabel.Parent = ContentContainer
-    
-    yOffset = yOffset + 30
-    
-    -- Скорость полёта
-    local SpeedLabel = Instance.new("TextLabel")
-    SpeedLabel.Size = UDim2.new(1, -20, 0, 20)
-    SpeedLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    SpeedLabel.BackgroundTransparency = 1
-    SpeedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    SpeedLabel.Text = "Скорость полёта: " .. Settings.FlySpeed
-    SpeedLabel.Font = Enum.Font.Gotham
-    SpeedLabel.TextSize = 12
-    SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-    SpeedLabel.Parent = ContentContainer
-    
-    local SpeedInput = Instance.new("TextBox")
-    SpeedInput.Size = UDim2.new(1, -20, 0, 20)
-    SpeedInput.Position = UDim2.new(0, 10, 0, yOffset + 20)
-    SpeedInput.BackgroundColor3 = Color3.fromRGB(35, 41, 54)
-    SpeedInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SpeedInput.Text = tostring(Settings.FlySpeed)
-    SpeedInput.Font = Enum.Font.Gotham
-    SpeedInput.TextSize = 12
-    SpeedInput.BorderSizePixel = 0
-    SpeedInput.Parent = ContentContainer
-    Round(SpeedInput, 8)
-    
-    SpeedInput.FocusLost:Connect(function()
-        local value = tonumber(SpeedInput.Text)
-        if value and value > 0 then
-            Settings.FlySpeed = value
-            SpeedLabel.Text = "Скорость полёта: " .. value
-        end
-    end)
-    
-    yOffset = yOffset + 50
-    
-    -- Радиус кружения
-    local RadiusLabel = Instance.new("TextLabel")
-    RadiusLabel.Size = UDim2.new(1, -20, 0, 20)
-    RadiusLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    RadiusLabel.BackgroundTransparency = 1
-    RadiusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    RadiusLabel.Text = "Радиус кружения: " .. Settings.CircleRadius
-    RadiusLabel.Font = Enum.Font.Gotham
-    RadiusLabel.TextSize = 12
-    RadiusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    RadiusLabel.Parent = ContentContainer
-    
-    local RadiusInput = Instance.new("TextBox")
-    RadiusInput.Size = UDim2.new(1, -20, 0, 20)
-    RadiusInput.Position = UDim2.new(0, 10, 0, yOffset + 20)
-    RadiusInput.BackgroundColor3 = Color3.fromRGB(35, 41, 54)
-    RadiusInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    RadiusInput.Text = tostring(Settings.CircleRadius)
-    RadiusInput.Font = Enum.Font.Gotham
-    RadiusInput.TextSize = 12
-    RadiusInput.BorderSizePixel = 0
-    RadiusInput.Parent = ContentContainer
-    Round(RadiusInput, 8)
-    
-    RadiusInput.FocusLost:Connect(function()
-        local value = tonumber(RadiusInput.Text)
-        if value and value > 0 then
-            Settings.CircleRadius = value
-            RadiusLabel.Text = "Радиус кружения: " .. value
-        end
-    end)
-    
-    yOffset = yOffset + 50
-    
-    -- Автовыбор оружия
-    local AutoWeaponLabel = Instance.new("TextLabel")
-    AutoWeaponLabel.Size = UDim2.new(1, -20, 0, 20)
-    AutoWeaponLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    AutoWeaponLabel.BackgroundTransparency = 1
-    AutoWeaponLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    AutoWeaponLabel.Text = "Автовыбор оружия"
-    AutoWeaponLabel.Font = Enum.Font.Gotham
-    AutoWeaponLabel.TextSize = 12
-    AutoWeaponLabel.TextXAlignment = Enum.TextXAlignment.Left
-    AutoWeaponLabel.Parent = ContentContainer
-    
-    local AutoWeaponToggle = Instance.new("TextButton")
-    AutoWeaponToggle.Size = UDim2.new(0, 40, 0, 20)
-    AutoWeaponToggle.Position = UDim2.new(1, -50, 0, yOffset)
-    AutoWeaponToggle.BackgroundColor3 = Settings.AutoWeapon and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 100)
-    AutoWeaponToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    AutoWeaponToggle.Text = Settings.AutoWeapon and "Вкл" or "Выкл"
-    AutoWeaponToggle.Font = Enum.Font.Gotham
-    AutoWeaponToggle.TextSize = 10
-    AutoWeaponToggle.BorderSizePixel = 0
-    AutoWeaponToggle.Parent = ContentContainer
-    
-    AutoWeaponToggle.MouseButton1Click:Connect(function()
+    local y = 10
+
+    local header = Instance.new("TextLabel")
+    header.Size = UDim2.new(1, -20, 0, 28)
+    header.Position = UDim2.new(0, 10, 0, y)
+    header.BackgroundTransparency = 1
+    header.Text = "⚔ Бой"
+    header.TextColor3 = Color3.fromRGB(245, 247, 250)
+    header.Font = Enum.Font.GothamBold
+    header.TextSize = 16
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.Parent = ContentContainer
+    y += 38
+
+    local function addNumberSetting(labelText, settingName, minValue, maxValue)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -20, 0, 20)
+        label.Position = UDim2.new(0, 10, 0, y)
+        label.BackgroundTransparency = 1
+        label.Text = labelText .. ": " .. tostring(Settings[settingName])
+        label.TextColor3 = Color3.fromRGB(205, 210, 220)
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 12
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = ContentContainer
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(1, -20, 0, 28)
+        box.Position = UDim2.new(0, 10, 0, y + 22)
+        box.BackgroundColor3 = Color3.fromRGB(35, 41, 54)
+        box.TextColor3 = Color3.fromRGB(245, 247, 250)
+        box.Text = tostring(Settings[settingName])
+        box.ClearTextOnFocus = false
+        box.Font = Enum.Font.Gotham
+        box.TextSize = 12
+        box.BorderSizePixel = 0
+        box.Parent = ContentContainer
+        Round(box, 8)
+
+        box.FocusLost:Connect(function()
+            local value = tonumber(box.Text)
+            if value then
+                value = math.clamp(value, minValue, maxValue)
+                Settings[settingName] = value
+                box.Text = tostring(value)
+                label.Text = labelText .. ": " .. tostring(value)
+            else
+                box.Text = tostring(Settings[settingName])
+            end
+        end)
+
+        y += 62
+    end
+
+    addNumberSetting("Скорость полёта", "FlySpeed", 1, 250)
+    addNumberSetting("Радиус кружения", "CircleRadius", 1, 100)
+    addNumberSetting("Высота", "CircleHeight", -50, 100)
+    addNumberSetting("Скорость кружения", "CircleSpeed", 0.05, 20)
+    addNumberSetting("Радиус атаки", "AttackRange", 1, 50)
+    addNumberSetting("Задержка атаки", "AttackCooldown", 0.05, 10)
+
+    local autoWeapon = Instance.new("TextButton")
+    autoWeapon.Size = UDim2.new(1, -20, 0, 34)
+    autoWeapon.Position = UDim2.new(0, 10, 0, y)
+    autoWeapon.BackgroundColor3 = Settings.AutoWeapon and Color3.fromRGB(48, 125, 82) or Color3.fromRGB(45, 51, 64)
+    autoWeapon.TextColor3 = Color3.fromRGB(245, 247, 250)
+    autoWeapon.Text = "Автовыбор оружия: " .. (Settings.AutoWeapon and "ON" or "OFF")
+    autoWeapon.Font = Enum.Font.GothamBold
+    autoWeapon.TextSize = 12
+    autoWeapon.BorderSizePixel = 0
+    autoWeapon.Parent = ContentContainer
+    Round(autoWeapon, 8)
+
+    autoWeapon.MouseButton1Click:Connect(function()
         Settings.AutoWeapon = not Settings.AutoWeapon
-        AutoWeaponToggle.BackgroundColor3 = Settings.AutoWeapon and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 100)
-        AutoWeaponToggle.Text = Settings.AutoWeapon and "Вкл" or "Выкл"
-    end)
-    
-    yOffset = yOffset + 30
-    
-    -- Слот оружия
-    local WeaponSlotLabel = Instance.new("TextLabel")
-    WeaponSlotLabel.Size = UDim2.new(1, -20, 0, 20)
-    WeaponSlotLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    WeaponSlotLabel.BackgroundTransparency = 1
-    WeaponSlotLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    WeaponSlotLabel.Text = "Слот оружия: " .. Settings.WeaponSlot
-    WeaponSlotLabel.Font = Enum.Font.Gotham
-    WeaponSlotLabel.TextSize = 12
-    WeaponSlotLabel.TextXAlignment = Enum.TextXAlignment.Left
-    WeaponSlotLabel.Parent = ContentContainer
-    
-    local WeaponSlotInput = Instance.new("TextBox")
-    WeaponSlotInput.Size = UDim2.new(1, -20, 0, 20)
-    WeaponSlotInput.Position = UDim2.new(0, 10, 0, yOffset + 20)
-    WeaponSlotInput.BackgroundColor3 = Color3.fromRGB(35, 41, 54)
-    WeaponSlotInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    WeaponSlotInput.Text = tostring(Settings.WeaponSlot)
-    WeaponSlotInput.Font = Enum.Font.Gotham
-    WeaponSlotInput.TextSize = 12
-    WeaponSlotInput.BorderSizePixel = 0
-    WeaponSlotInput.Parent = ContentContainer
-    Round(WeaponSlotInput, 8)
-    
-    WeaponSlotInput.FocusLost:Connect(function()
-        local value = tonumber(WeaponSlotInput.Text)
-        if value and value > 0 and value <= 10 then
-            Settings.WeaponSlot = value
-            WeaponSlotLabel.Text = "Слот оружия: " .. value
-        end
-    end)
-    
-    yOffset = yOffset + 50
-    
-    -- Разделитель
-    local Separator = Instance.new("Frame")
-    Separator.Size = UDim2.new(1, -20, 0, 2)
-    Separator.Position = UDim2.new(0, 10, 0, yOffset)
-    Separator.BackgroundColor3 = Color3.fromRGB(48, 56, 72)
-    Separator.BorderSizePixel = 0
-    Separator.Parent = ContentContainer
-    
-    yOffset = yOffset + 15
-    
-    local AntiAimLabel = Instance.new("TextLabel") -20, 0, 25) 10, 0, yOffset) 255, 255)
-    
-    yOffset = yOffset + 30
-    
-    local EnableLabel = Instance.new("TextLabel")
-    EnableLabel.Size = UDim2.new(1, -20, 0, 20)
-    EnableLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    EnableLabel.BackgroundTransparency = 1
-    EnableLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    EnableLabel.Text = "Включить Anti-Aim"
-    EnableLabel.Font = Enum.Font.Gotham
-    EnableLabel.TextSize = 12
-    EnableLabel.TextXAlignment = Enum.TextXAlignment.Left
-    EnableLabel.Parent = ContentContainer
-    
-    local EnableToggle = Instance.new("TextButton")
-    EnableToggle.Size = UDim2.new(0, 40, 0, 20)
-    EnableToggle.Position = UDim2.new(1, -50, 0, yOffset)
-    EnableToggle.BackgroundColor3 = Settings.AntiAim.Enabled and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 100)
-    EnableToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    EnableToggle.Text = Settings.AntiAim.Enabled and "Вкл" or "Выкл"
-    EnableToggle.Font = Enum.Font.Gotham
-    EnableToggle.TextSize = 10
-    EnableToggle.BorderSizePixel = 0
-    EnableToggle.Parent = ContentContainer
-    
-    EnableToggle.MouseButton1Click:Connect(function()
-        Settings.AntiAim.Enabled = not Settings.AntiAim.Enabled
-        EnableToggle.BackgroundColor3 = Settings.AntiAim.Enabled and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 100)
-        EnableToggle.Text = Settings.AntiAim.Enabled and "Вкл" or "Выкл"
-    end)
-    
-    yOffset = yOffset + 30
-    
-    local TypeLabel = Instance.new("TextLabel")
-    TypeLabel.Size = UDim2.new(1, -20, 0, 20)
-    TypeLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    TypeLabel.BackgroundTransparency = 1
-    TypeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    TypeLabel.Text = "Тип: " .. Settings.AntiAim.Type
-    TypeLabel.Font = Enum.Font.Gotham
-    TypeLabel.TextSize = 12
-    TypeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    TypeLabel.Parent = ContentContainer
-    
-    local TypeDropdown = Instance.new("TextButton")
-    TypeDropdown.Size = UDim2.new(1, -20, 0, 25)
-    TypeDropdown.Position = UDim2.new(0, 10, 0, yOffset + 20)
-    TypeDropdown.BackgroundColor3 = Color3.fromRGB(35, 41, 54)
-    TypeDropdown.TextColor3 = Color3.fromRGB(200, 200, 200)
-    TypeDropdown.Text = Settings.AntiAim.Type
-    TypeDropdown.Font = Enum.Font.Gotham
-    TypeDropdown.TextSize = 12
-    TypeDropdown.BorderSizePixel = 0
-    TypeDropdown.Parent = ContentContainer
-    Round(TypeDropdown, 8)
-    
-    local types = {"Jitter", "Random", "Spin"}
-    local typeIndex = table.find(types, Settings.AntiAim.Type) or 1
-    
-    TypeDropdown.MouseButton1Click:Connect(function()
-        typeIndex = typeIndex % #types + 1
-        Settings.AntiAim.Type = types[typeIndex]
-        TypeDropdown.Text = Settings.AntiAim.Type
-        TypeLabel.Text = "Тип: " .. Settings.AntiAim.Type
-    end)
-    
-    yOffset = yOffset + 60
-    
-    local SpeedLabel = Instance.new("TextLabel")
-    SpeedLabel.Size = UDim2.new(1, -20, 0, 20)
-    SpeedLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    SpeedLabel.BackgroundTransparency = 1
-    SpeedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    SpeedLabel.Text = "Скорость: " .. Settings.AntiAim.Speed
-    SpeedLabel.Font = Enum.Font.Gotham
-    SpeedLabel.TextSize = 12
-    SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-    SpeedLabel.Parent = ContentContainer
-    
-    local SpeedInput = Instance.new("TextBox")
-    SpeedInput.Size = UDim2.new(1, -20, 0, 20)
-    SpeedInput.Position = UDim2.new(0, 10, 0, yOffset + 20)
-    SpeedInput.BackgroundColor3 = Color3.fromRGB(35, 41, 54)
-    SpeedInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SpeedInput.Text = tostring(Settings.AntiAim.Speed)
-    SpeedInput.Font = Enum.Font.Gotham
-    SpeedInput.TextSize = 12
-    SpeedInput.BorderSizePixel = 0
-    SpeedInput.Parent = ContentContainer
-    
-    SpeedInput.FocusLost:Connect(function()
-        local value = tonumber(SpeedInput.Text)
-        if value and value > 0 then
-            Settings.AntiAim.Speed = value
-            SpeedLabel.Text = "Скорость: " .. value
-        end
-    end)
-    
-    yOffset = yOffset + 50
-    
-    -- Диапазон
-    local RangeLabel = Instance.new("TextLabel")
-    RangeLabel.Size = UDim2.new(1, -20, 0, 20)
-    RangeLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    RangeLabel.BackgroundTransparency = 1
-    RangeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    RangeLabel.Text = "Диапазон: " .. Settings.AntiAim.Range
-    RangeLabel.Font = Enum.Font.Gotham
-    RangeLabel.TextSize = 12
-    RangeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    RangeLabel.Parent = ContentContainer
-    
-    local RangeInput = Instance.new("TextBox")
-    RangeInput.Size = UDim2.new(1, -20, 0, 20)
-    RangeInput.Position = UDim2.new(0, 10, 0, yOffset + 20)
-    RangeInput.BackgroundColor3 = Color3.fromRGB(35, 41, 54)
-    RangeInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    RangeInput.Text = tostring(Settings.AntiAim.Range)
-    RangeInput.Font = Enum.Font.Gotham
-    RangeInput.TextSize = 12
-    RangeInput.BorderSizePixel = 0
-    RangeInput.Parent = ContentContainer
-    
-    RangeInput.FocusLost:Connect(function()
-        local value = tonumber(RangeInput.Text)
-        if value and value > 0 then
-            Settings.AntiAim.Range = value
-            RangeLabel.Text = "Диапазон: " .. value
-        end
+        autoWeapon.Text = "Автовыбор оружия: " .. (Settings.AutoWeapon and "ON" or "OFF")
+        autoWeapon.BackgroundColor3 = Settings.AutoWeapon and Color3.fromRGB(48, 125, 82) or Color3.fromRGB(45, 51, 64)
     end)
 end
 
--- Функция создания вкладки Movement
 CreateMovementTabContent = function()
-    local yOffset = 10
-    
-    -- Заголовок
-    local MovementLabel = Instance.new("TextLabel")
-    MovementLabel.Size = UDim2.new(1, -20, 0, 25)
-    MovementLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    MovementLabel.BackgroundTransparency = 1
-    MovementLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    MovementLabel.Text = "🏃 Настройки движения"
-    MovementLabel.Font = Enum.Font.GothamBold
-    MovementLabel.TextSize = 16
-    MovementLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MovementLabel.Parent = ContentContainer
-    
-    yOffset = yOffset + 35
-    
-    -- Noclip
-    local NoclipLabel = Instance.new("TextLabel")
-    NoclipLabel.Size = UDim2.new(1, -20, 0, 25)
-    NoclipLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    NoclipLabel.BackgroundTransparency = 1
-    NoclipLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    NoclipLabel.Text = "Noclip (проход сквозь стены)"
-    NoclipLabel.Font = Enum.Font.Gotham
-    NoclipLabel.TextSize = 14
-    NoclipLabel.TextXAlignment = Enum.TextXAlignment.Left
-    NoclipLabel.Parent = ContentContainer
-    
-    local NoclipToggle = Instance.new("TextButton")
-    NoclipToggle.Size = UDim2.new(0, 50, 0, 25)
-    NoclipToggle.Position = UDim2.new(1, -60, 0, yOffset)
-    NoclipToggle.BackgroundColor3 = Settings.Noclip and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 100)
-    NoclipToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    NoclipToggle.Text = Settings.Noclip and "Вкл" or "Выкл"
-    NoclipToggle.Font = Enum.Font.Gotham
-    NoclipToggle.TextSize = 12
-    NoclipToggle.BorderSizePixel = 0
-    NoclipToggle.Parent = ContentContainer
-    Round(NoclipToggle, 8)
-    
-    NoclipToggle.MouseButton1Click:Connect(function()
-        Settings.Noclip = not Settings.Noclip
-        NoclipToggle.BackgroundColor3 = Settings.Noclip and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 100)
-        NoclipToggle.Text = Settings.Noclip and "Вкл" or "Выкл"
-    end)
-    
-    yOffset = yOffset + 40
-    
-    -- Fly
-    local FlyLabel = Instance.new("TextLabel")
-    FlyLabel.Size = UDim2.new(1, -20, 0, 25)
-    FlyLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    FlyLabel.BackgroundTransparency = 1
-    FlyLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    FlyLabel.Text = "Fly (полёт)"
-    FlyLabel.Font = Enum.Font.Gotham
-    FlyLabel.TextSize = 14
-    FlyLabel.TextXAlignment = Enum.TextXAlignment.Left
-    FlyLabel.Parent = ContentContainer
-    
-    local FlyToggle = Instance.new("TextButton")
-    FlyToggle.Size = UDim2.new(0, 50, 0, 25)
-    FlyToggle.Position = UDim2.new(1, -60, 0, yOffset)
-    FlyToggle.BackgroundColor3 = Settings.Fly and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 100)
-    FlyToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    FlyToggle.Text = Settings.Fly and "Вкл" or "Выкл"
-    FlyToggle.Font = Enum.Font.Gotham
-    FlyToggle.TextSize = 12
-    FlyToggle.BorderSizePixel = 0
-    FlyToggle.Parent = ContentContainer
-    Round(FlyToggle, 8)
-    
-    FlyToggle.MouseButton1Click:Connect(function()
-        Settings.Fly = not Settings.Fly
-        FlyToggle.BackgroundColor3 = Settings.Fly and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 100)
-        FlyToggle.Text = Settings.Fly and "Вкл" or "Выкл"
-    end)
-    
-    yOffset = yOffset + 40
-    
-    -- Высота полёта
-    local HeightLabel = Instance.new("TextLabel")
-    HeightLabel.Size = UDim2.new(1, -20, 0, 20)
-    HeightLabel.Position = UDim2.new(0, 10, 0, yOffset)
-    HeightLabel.BackgroundTransparency = 1
-    HeightLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    HeightLabel.Text = "Высота над целью: " .. Settings.CircleHeight
-    HeightLabel.Font = Enum.Font.Gotham
-    HeightLabel.TextSize = 12
-    HeightLabel.TextXAlignment = Enum.TextXAlignment.Left
-    HeightLabel.Parent = ContentContainer
-    
-    local HeightInput = Instance.new("TextBox")
-    HeightInput.Size = UDim2.new(1, -20, 0, 20)
-    HeightInput.Position = UDim2.new(0, 10, 0, yOffset + 20)
-    HeightInput.BackgroundColor3 = Color3.fromRGB(35, 41, 54)
-    HeightInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    HeightInput.Text = tostring(Settings.CircleHeight)
-    HeightInput.Font = Enum.Font.Gotham
-    HeightInput.TextSize = 12
-    HeightInput.BorderSizePixel = 0
-    HeightInput.Parent = ContentContainer
-    Round(HeightInput, 8)
-    
-    HeightInput.FocusLost:Connect(function()
-        local value = tonumber(HeightInput.Text)
-        if value then
-            Settings.CircleHeight = value
-            HeightLabel.Text = "Высота над целью: " .. value
-        end
-    end)
+    local y = 10
+
+    local header = Instance.new("TextLabel")
+    header.Size = UDim2.new(1, -20, 0, 28)
+    header.Position = UDim2.new(0, 10, 0, y)
+    header.BackgroundTransparency = 1
+    header.Text = "🏃 Movement"
+    header.TextColor3 = Color3.fromRGB(245, 247, 250)
+    header.Font = Enum.Font.GothamBold
+    header.TextSize = 16
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.Parent = ContentContainer
+    y += 40
+
+    local function addToggle(text, settingName)
+        local button = Instance.new("TextButton")
+        button.Size = UDim2.new(1, -20, 0, 36)
+        button.Position = UDim2.new(0, 10, 0, y)
+        button.BackgroundColor3 = Settings[settingName] and Color3.fromRGB(48, 125, 82) or Color3.fromRGB(45, 51, 64)
+        button.TextColor3 = Color3.fromRGB(245, 247, 250)
+        button.Text = text .. ": " .. (Settings[settingName] and "ON" or "OFF")
+        button.Font = Enum.Font.GothamBold
+        button.TextSize = 12
+        button.BorderSizePixel = 0
+        button.Parent = ContentContainer
+        Round(button, 8)
+
+        button.MouseButton1Click:Connect(function()
+            Settings[settingName] = not Settings[settingName]
+            button.Text = text .. ": " .. (Settings[settingName] and "ON" or "OFF")
+            button.BackgroundColor3 = Settings[settingName] and Color3.fromRGB(48, 125, 82) or Color3.fromRGB(45, 51, 64)
+            if settingName == "Noclip" and not Settings.Noclip then
+                RestoreNoclip()
+            end
+        end)
+
+        y += 45
+    end
+
+    addToggle("Fly", "Fly")
+    addToggle("Noclip", "Noclip")
+
+    local hint = Instance.new("TextLabel")
+    hint.Size = UDim2.new(1, -20, 0, 55)
+    hint.Position = UDim2.new(0, 10, 0, y + 5)
+    hint.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+    hint.TextColor3 = Color3.fromRGB(175, 182, 195)
+    hint.Text = "Noclip работает независимо от движения и восстанавливает CanCollide после отключения."
+    hint.Font = Enum.Font.Gotham
+    hint.TextSize = 11
+    hint.TextWrapped = true
+    hint.BorderSizePixel = 0
+    hint.Parent = ContentContainer
+    Round(hint, 8)
 end
 
 -- Функции скрипта
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-
-local function MakeDraggable(handle, object)
-    local dragging, dragStart, startPos, dragInput = false, nil, nil, nil
-    handle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging, dragStart, startPos = true, input.Position, object.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false end
-            end)
-        end
-    end)
-    handle.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input == dragInput then
-            local d = input.Position - dragStart
-            object.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
-        end
-    end)
-end
-
-local function AddStroke(obj)
-    local s=Instance.new("UIStroke")
-    s.Color=Color3.fromRGB(85,100,130); s.Thickness=1; s.Transparency=.45; s.Parent=obj
-end
-
-
-local function ApplyNoclip()
-    local plr=Players.LocalPlayer; local char=plr and plr.Character
-    if not char then return end
-    if Settings.Noclip then
-        for _,part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                if noclipParts[part]==nil then noclipParts[part]=part.CanCollide end
-                part.CanCollide=false
-            end
-        end
-    else
-        for part,old in pairs(noclipParts) do
-            if part and part.Parent then part.CanCollide=old end
-            noclipParts[part]=nil
-        end
-    end
-end
-
 local function GetHumanoid(character)
     return character and character:FindFirstChildOfClass("Humanoid")
-end
-
-local function IsAlive(player)
-    local character = player and player.Character
-    local humanoid = GetHumanoid(character)
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    return humanoid ~= nil and humanoid.Health > 0 and root ~= nil
-end
-
-local function GetTargetRoot(player)
-    local character = player and player.Character
-    return character and character:FindFirstChild("HumanoidRootPart")
-end
-
-local function GetBestTarget()
-    if Settings.TargetMode == "Nearest" then return GetNearestTarget() end
-    if Target and IsAlive(Target) then return Target end
-    return nil
-end
-
-local function GetNearestTarget()
-    local localPlayer = Players.LocalPlayer
-    local localCharacter = localPlayer and localPlayer.Character
-    local localRoot = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")
-    if not localRoot then return nil end
-
-    local nearest, nearestDistance
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= localPlayer and IsAlive(player) then
-            local root = GetTargetRoot(player)
-            local distance = (root.Position - localRoot.Position).Magnitude
-            if not nearestDistance or distance < nearestDistance then
-                nearest = player
-                nearestDistance = distance
-            end
-        end
-    end
-    return nearest
 end
 
 local function GetCharacter(player)
     return player and player.Character or nil
 end
 
-local function EquipWeapon()
-    if not Settings.AutoWeapon then return end
-    
-    local localPlayer = game:GetService("Players").LocalPlayer
-    local localChar = localPlayer.Character
-    if not localChar then return end
-    
-    -- Проверяем, есть ли уже оружие
-    local currentTool = localChar:FindFirstChildOfClass("Tool")
-    if currentTool then return end
-    
-    -- Ищем оружие в рюкзаке
-    local backpack = localPlayer:FindFirstChild("Backpack")
-    if not backpack then return end
-    
-    local weapon = backpack:FindFirstChildOfClass("Tool")
-    if not weapon then return end
-    
-    -- Экипируем
-    local humanoid = localChar:FindFirstChild("Humanoid")
-    if humanoid then
-        humanoid:EquipTool(weapon)
+local function GetTargetRoot(player)
+    local character = GetCharacter(player)
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function IsAlive(player)
+    local character = GetCharacter(player)
+    local humanoid = GetHumanoid(character)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    return player ~= nil and humanoid ~= nil and humanoid.Health > 0 and root ~= nil
+end
+
+local function GetNearestTarget()
+    local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not localRoot then return nil end
+
+    local nearest = nil
+    local nearestDistance = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and IsAlive(player) then
+            local root = GetTargetRoot(player)
+            if root then
+                local distance = (root.Position - localRoot.Position).Magnitude
+                if distance < nearestDistance then
+                    nearest = player
+                    nearestDistance = distance
+                end
+            end
+        end
+    end
+
+    return nearest
+end
+
+local function RestoreNoclip()
+    for part, originalCanCollide in pairs(noclipParts) do
+        if part and part.Parent then
+            part.CanCollide = originalCanCollide
+        end
+    end
+    table.clear(noclipParts)
+end
+
+local function ApplyNoclip()
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    if not Settings.Noclip then
+        RestoreNoclip()
+        return
+    end
+
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            if noclipParts[part] == nil then
+                noclipParts[part] = part.CanCollide
+            end
+            part.CanCollide = false
+        end
     end
 end
 
-local function Attack(targetChar)
-    if not targetChar then return end
-    
-    local humanoid = targetChar:FindFirstChild("Humanoid")
-    if not humanoid then return end
-    
-    local currentTime = tick()
-    if currentTime - lastAttackTime < Settings.AttackCooldown then
+local function EquipWeapon()
+    if not Settings.AutoWeapon then return end
+
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    if character:FindFirstChildOfClass("Tool") then
         return
     end
-    
-    -- Автовыбор оружия
-    EquipWeapon()
-    
-    -- Атака
-    local success, err = pcall(function()
-        local player = game:GetService("Players").LocalPlayer
-        local character = player and player.Character
-        local tool = character and character:FindFirstChildOfClass("Tool")
 
-        if tool then
-            tool:Activate()
-            lastAttackTime = currentTime
-        end
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+    local humanoid = GetHumanoid(character)
+    if not backpack or not humanoid then return end
+
+    local tool = backpack:FindFirstChildOfClass("Tool")
+    if tool then
+        humanoid:EquipTool(tool)
+    end
+end
+
+local function Attack(targetCharacter)
+    if not targetCharacter then return end
+
+    local humanoid = GetHumanoid(targetCharacter)
+    if not humanoid or humanoid.Health <= 0 then return end
+
+    local now = os.clock()
+    if now - lastAttackTime < Settings.AttackCooldown then
+        return
+    end
+
+    EquipWeapon()
+
+    local character = LocalPlayer.Character
+    local tool = character and character:FindFirstChildOfClass("Tool")
+    if not tool then return end
+
+    local ok, err = pcall(function()
+        tool:Activate()
     end)
 
-    if not success then
+    if ok then
+        lastAttackTime = now
+    else
         warn("[AI Target] Ошибка атаки:", err)
     end
 end
 
-local function ApplyAntiAim()
-    if not Settings.AntiAim.Enabled then return end
-    
-    local localPlayer = game:GetService("Players").LocalPlayer
-    local localChar = localPlayer.Character
-    if not localChar then return end
-    
-    local humanoidRootPart = localChar:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return end
-    
-    local currentTime = tick()
-    local deltaTime = currentTime - AntiAim.lastUpdate
-    
-    if Settings.AntiAim.Type == "Jitter" then
-        local jitterOffset = math.sin(AntiAim.jitterAngle) * Settings.AntiAim.Range
-        humanoidRootPart.CFrame = humanoidRootPart.CFrame * CFrame.Angles(0, math.rad(jitterOffset), 0)
-        
-    elseif Settings.AntiAim.Type == "Random" then
-        if currentTime - AntiAim.randomLastUpdate > 0.1 then
-            local randomAngle = math.random(-Settings.AntiAim.Range, Settings.AntiAim.Range)
-            humanoidRootPart.CFrame = humanoidRootPart.CFrame * CFrame.Angles(0, math.rad(randomAngle), 0)
-        end
-        
-    elseif Settings.AntiAim.Type == "Spin" then
-        humanoidRootPart.CFrame = humanoidRootPart.CFrame * CFrame.Angles(0, math.rad(AntiAim.spinAngle), 0)
+local function GetBestTarget()
+    if Settings.AutoTarget then
+        return GetNearestTarget()
     end
+
+    if Target and IsAlive(Target) then
+        return Target
+    end
+
+    return nil
 end
 
 local function MoveToTarget()
-    if not isActive or not Target then return end
-    
-    local targetChar = GetCharacter(Target)
-    if not targetChar then return end
-    
-    local localPlayer = game:GetService("Players").LocalPlayer
-    local localChar = localPlayer.Character
-    if not localChar then return end
-    
-    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-    local localRoot = localChar:FindFirstChild("HumanoidRootPart")
-    
-    if not targetRoot or not localRoot then return end
-    
-    local currentTime = tick()
-    local targetPos = targetRoot.Position
+    if not isActive then return end
 
-    -- Кружение
-    circleAngle = circleAngle + math.rad(Settings.CircleSpeed)
-    if circleAngle > math.pi * 2 then
-        circleAngle = circleAngle - math.pi * 2
+    if Settings.AutoTarget then
+        local nearest = GetNearestTarget()
+        if nearest then
+            Target = nearest
+        end
     end
-    
-    local circlePos = Vector3.new(
-        targetPos.X + math.cos(circleAngle) * Settings.CircleRadius,
-        targetPos.Y + Settings.CircleHeight,
-        targetPos.Z + math.sin(circleAngle) * Settings.CircleRadius
+
+    if not Target or not IsAlive(Target) then
+        StopScript()
+        return
+    end
+
+    local character = LocalPlayer.Character
+    local localRoot = character and character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = GetTargetRoot(Target)
+
+    if not localRoot or not targetRoot then
+        return
+    end
+
+    if not Settings.Fly then
+        localRoot.AssemblyLinearVelocity = Vector3.zero
+        ApplyNoclip()
+        return
+    end
+
+    circleAngle += math.rad(Settings.CircleSpeed)
+    if circleAngle >= math.pi * 2 then
+        circleAngle -= math.pi * 2
+    end
+
+    local targetPosition = targetRoot.Position
+    local desiredPosition = targetPosition + Vector3.new(
+        math.cos(circleAngle) * Settings.CircleRadius,
+        Settings.CircleHeight,
+        math.sin(circleAngle) * Settings.CircleRadius
     )
-    
-    local direction = (circlePos - localRoot.Position).Unit
-    local distance = (circlePos - localRoot.Position).Magnitude
-    
-    if distance > 1 then
-        localRoot.AssemblyLinearVelocity = direction * Settings.FlySpeed
+
+    local offset = desiredPosition - localRoot.Position
+    local distance = offset.Magnitude
+
+    if distance > 0.5 then
+        local speed = math.clamp(distance * 5, 0, Settings.FlySpeed)
+        localRoot.AssemblyLinearVelocity = offset.Unit * speed
     else
-        localRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        localRoot.AssemblyLinearVelocity = Vector3.zero
     end
-    
-    -- Атака
-    if distance < Settings.AttackRange then
-        Attack(targetChar)
+
+    if (targetRoot.Position - localRoot.Position).Magnitude <= Settings.AttackRange then
+        Attack(Target.Character)
     end
-    
-    -- Noclip
+
     ApplyNoclip()
 end
 
 StartScript = function()
     local selected = GetBestTarget()
-    if not selected or not IsAlive(selected) then
-        if _G.StatusLabel then _G.StatusLabel.Text="Статус: подходящей цели нет" end
+
+    if not selected then
+        if _G.StatusLabel then
+            _G.StatusLabel.Text = "Статус: выбери живую цель"
+        end
         return false
     end
-    Target=selected
-    if connection then connection:Disconnect(); connection=nil end
-    isActive=true
-    if _G.StatusLabel then _G.StatusLabel.Text="Статус: Активен — "..Target.DisplayName end
-    connection=RunService.Heartbeat:Connect(function()
-        if Settings.TargetMode=="Nearest" then
-            local nearest=GetNearestTarget()
-            if nearest then Target=nearest end
-        elseif not IsAlive(Target) then
-            StopScript(); return
-        end
-        MoveToTarget()
-    end)
+
+    Target = selected
+
+    if connection then
+        connection:Disconnect()
+        connection = nil
+    end
+
+    isActive = true
+
+    if _G.StatusLabel then
+        _G.StatusLabel.Text = "Статус: Активен — " .. Target.DisplayName
+    end
+
+    connection = RunService.Heartbeat:Connect(MoveToTarget)
     return true
 end
 
@@ -1041,41 +800,51 @@ StopScript = function()
         connection = nil
     end
 
-    local localPlayer = Players.LocalPlayer
-    local localChar = localPlayer and localPlayer.Character
-    if localChar then
-        localRoot = localChar:FindFirstChild("HumanoidRootPart")
-        if localRoot then
-            localRoot.AssemblyLinearVelocity = Vector3.zero
-        end
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.AssemblyLinearVelocity = Vector3.zero
     end
 
-    for part, originalCanCollide in pairs(noclipParts) do
-        if part and part.Parent then
-            part.CanCollide = originalCanCollide
-        end
-    end
-    table.clear(noclipParts)
+    RestoreNoclip()
 
     if _G.StatusLabel then
         _G.StatusLabel.Text = "Статус: Остановлен"
     end
 end
 
+-- Noclip работает отдельно от target/fly loop.
 local noclipConnection = RunService.Stepped:Connect(function()
-    if Settings.Noclip then ApplyNoclip() end
+    if Settings.Noclip then
+        ApplyNoclip()
+    end
 end)
 
 -- Подключаем кнопку сворачивания
 MinimizeButton.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
     MinimizeButton.Text = isMinimized and "+" or "−"
+
     if isMinimized then
-        TabBar.Visible=false; ContentContainer.Visible=false
-        TweenService:Create(MainFrame,TweenInfo.new(.16,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=UDim2.new(0,175,0,38)}):Play()
+        TabBar.Visible = false
+        ContentContainer.Visible = false
+        TweenService:Create(
+            MainFrame,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Size = UDim2.new(0, 175, 0, 38)}
+        ):Play()
     else
-        TweenService:Create(MainFrame,TweenInfo.new(.16,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=UDim2.new(0,400,0,500)}):Play()
-        task.delay(.08,function() if not isMinimized then TabBar.Visible=true; ContentContainer.Visible=true end end)
+        TweenService:Create(
+            MainFrame,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Size = UDim2.new(0, 400, 0, 500)}
+        ):Play()
+        task.delay(0.1, function()
+            if not isMinimized then
+                TabBar.Visible = true
+                ContentContainer.Visible = true
+            end
+        end)
     end
 end)
 
@@ -1094,8 +863,6 @@ end
 SwitchTab("Главная")
 
 -- Добавляем GUI на экран
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
 
 if PlayerGui then
@@ -1104,5 +871,5 @@ else
     ScreenGui.Parent = game:GetService("CoreGui")
 end
 
-print("✅ AI Target • v5.0 загружен!")
+print("✅ AI Target • v5.1 загружен!")
 print("💡 Выбери игрока из списка и нажми 'Запустить'")
